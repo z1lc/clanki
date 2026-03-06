@@ -3,3 +3,4 @@ repomix-output.txt
 build/
 node_modules/
 .gemini-api-key
+.idea/
