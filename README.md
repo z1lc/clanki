@@ -62,53 +62,7 @@ npm run build
 Replace `/absolute/path/to/clanki` with the actual path to your clanki installation.
 
 ## Available Tools
-
-### create-deck
-
-Creates a new Anki deck
-
-- Parameters:
-  - `name`: Name for the new deck
-
-### create-card
-
-Creates a new basic flashcard in a specified deck
-
-- Parameters:
-  - `deckName`: Name of the deck to add the card to
-  - `front`: Front side content of the card
-  - `back`: Back side content of the card
-  - `tags`: (Optional) Array of tags for the card
-
-### create-cloze-card
-
-Creates a new cloze deletion card in a specified deck
-
-- Parameters:
-  - `deckName`: Name of the deck to add the card to
-  - `text`: Text containing cloze deletions using {{c1::text}} syntax
-  - `backExtra`: (Optional) Extra information to show on the back of the card
-  - `tags`: (Optional) Array of tags for the card
-
-### update-card
-
-Updates an existing basic flashcard
-
-- Parameters:
-  - `noteId`: ID of the note to update
-  - `front`: (Optional) New front side content
-  - `back`: (Optional) New back side content
-  - `tags`: (Optional) New tags for the card
-
-### update-cloze-card
-
-Updates an existing cloze deletion card
-
-- Parameters:
-  - `noteId`: ID of the note to update
-  - `text`: (Optional) New text with cloze deletions
-  - `backExtra`: (Optional) New extra information for the back
-  - `tags`: (Optional) New tags for the card
+Tools exist for searching across the collection as well as creating three types of notes: basic; interview question; and programming language function.
 
 ## Development
 
