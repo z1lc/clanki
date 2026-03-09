@@ -5,7 +5,10 @@
   "scripts": {
     "build": "tsc",
     "start": "node build/index.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "format": "biome format --write src/",
+    "lint": "biome lint src/",
+    "check": "biome check --write src/"
   },
   "keywords": [],
   "author": "",
@@ -17,6 +20,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.4.6",
     "@types/node": "^22.10.7",
     "typescript": "^5.7.3",
     "vitest": "^4.0.18"

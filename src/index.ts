@@ -1,32 +1,23 @@
+import * as fs from "node:fs";
+import * as http from "node:http";
+import * as path from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
-  ListToolsRequestSchema,
   ListResourcesRequestSchema,
+  ListToolsRequestSchema,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import * as http from "http";
-import * as fs from "fs";
-import * as path from "path";
 
 // Constants
-const ANKI_CONNECT_URL = "http://localhost:8765";
+const _ANKI_CONNECT_URL = "http://localhost:8765";
 const SEARCH_PAGE_SIZE = 100;
 const DEFAULT_DECK = "z::0 mcp";
 const MCP_TAG = "mcp_generated";
 
 // Type definitions for Anki responses
-interface AnkiCard {
-  noteId: number;
-  fields: {
-    Front: { value: string };
-    Back: { value: string };
-  };
-  tags: string[];
-}
-
 interface AnkiResponse<T> {
   result: T;
   error: string | null;
@@ -137,16 +128,8 @@ const SearchCollectionArgumentsSchema = z.object({
 });
 
 // Helper function for making AnkiConnect requests with retries
-async function ankiRequest<T>(
-  action: string,
-  params: Record<string, any> = {},
-  retries = 3,
-  delay = 1000
-): Promise<T> {
-  console.error(
-    `Attempting AnkiConnect request: ${action} with params:`,
-    params
-  );
+async function ankiRequest<T>(action: string, params: Record<string, any> = {}, retries = 3, delay = 1000): Promise<T> {
+  console.error(`Attempting AnkiConnect request: ${action} with params:`, params);
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -182,11 +165,7 @@ async function ankiRequest<T>(
             console.error(`AnkiConnect response body: ${responseData}`);
 
             if (res.statusCode !== 200) {
-              reject(
-                new Error(
-                  `AnkiConnect request failed with status ${res.statusCode}: ${responseData}`
-                )
-              );
+              reject(new Error(`AnkiConnect request failed with status ${res.statusCode}: ${responseData}`));
               return;
             }
 
@@ -202,10 +181,7 @@ async function ankiRequest<T>(
               }
 
               // Some actions like updateNoteFields return null on success
-              if (
-                parsedData.result === null ||
-                parsedData.result === undefined
-              ) {
+              if (parsedData.result === null || parsedData.result === undefined) {
                 // For actions that are expected to return null/undefined, return an empty success response
                 if (action === "updateNoteFields") {
                   resolve({} as T);
@@ -219,20 +195,13 @@ async function ankiRequest<T>(
               resolve(parsedData.result);
             } catch (parseError) {
               console.error("Parse error:", parseError);
-              reject(
-                new Error(
-                  `Failed to parse AnkiConnect response: ${responseData}`
-                )
-              );
+              reject(new Error(`Failed to parse AnkiConnect response: ${responseData}`));
             }
           });
         });
 
         req.on("error", (error: Error) => {
-          console.error(
-            `Error in ankiRequest (attempt ${attempt}/${retries}):`,
-            error
-          );
+          console.error(`Error in ankiRequest (attempt ${attempt}/${retries}):`, error);
           reject(error);
         });
 
@@ -246,9 +215,7 @@ async function ankiRequest<T>(
       if ((error as any).ankiError || attempt === retries) {
         throw error;
       }
-      console.error(
-        `Attempt ${attempt}/${retries} failed, retrying after ${delay}ms...`
-      );
+      console.error(`Attempt ${attempt}/${retries} failed, retrying after ${delay}ms...`);
       await new Promise((resolve) => setTimeout(resolve, delay));
       // Increase delay for next attempt
       delay *= 2;
@@ -270,13 +237,13 @@ const RULES = `
 * For all fields, try to simplify text structure as much as possible -- the user wants to optimize for fast reviews, and the more 'filler' text that is contained, the worse things are.
 * Questions should NEVER ask for only a concrete numerical value, like a specific percentage.
 * An answer should NEVER be only a specific command, function name, class name.
-`
+`;
 
 const EXTRA_RULES = `
 If you need to style elements in fields, ALWAYS use HTML. For example:
   * use \`<code>functionCall();</code>\` when wanting to show code or other monospaced output (like bash commands)
   * use \`<i>the i element</i>\` when wanting to use italics
-  * use HTML lists (\`<ul><li>item</li></ul>\`) when listing multiple items, especially if they are the answer to a question`
+  * use HTML lists (\`<ul><li>item</li></ul>\`) when listing multiple items, especially if they are the answer to a question`;
 
 const VALIDATION_PROMPT = `What follows is a list of rules for creation of flashcards, as well as an example flashcard. Your task is to evaluate if the example flashcard follows the rules. Output a JSON dictionary with two keys: a \`result\` key, which contains \`true\` or \`false\`, for whether the rules were mostly followed. And \`details\`, that is a very short description of what rules, if any, were violated.
 
@@ -315,7 +282,11 @@ async function geminiRequest(model: string, prompt: string): Promise<string> {
   return data.candidates[0].content.parts[0].text;
 }
 
-async function validateCard(front: string, back: string, extra: string): Promise<{ front: string; back: string; extra: string; details?: string }> {
+async function validateCard(
+  front: string,
+  back: string,
+  extra: string,
+): Promise<{ front: string; back: string; extra: string; details?: string }> {
   const cardJson = JSON.stringify({ front, back, extra });
   const validationText = `${VALIDATION_PROMPT}\n${cardJson}\n"""`;
   const raw = await geminiRequest("gemini-3-flash-preview", validationText);
@@ -339,12 +310,8 @@ export function validateSearchQuery(query: string): void {
   const segments = query.split(/\bAND\b|\bOR\b/);
   const multiWordPhrases: string[] = [];
   for (const segment of segments) {
-    const stripped = segment
-      .replace(/-?"[^"]*"/g, "")
-      .trim();
-    const bareWords = stripped
-      .split(/\s+/)
-      .filter((t) => t && !t.includes(":"));
+    const stripped = segment.replace(/-?"[^"]*"/g, "").trim();
+    const bareWords = stripped.split(/\s+/).filter((t) => t && !t.includes(":"));
     if (bareWords.length > 1) {
       multiWordPhrases.push(bareWords.join(" "));
     }
@@ -352,14 +319,12 @@ export function validateSearchQuery(query: string): void {
   if (multiWordPhrases.length > 0) {
     if (hasOperators) {
       const quoted = multiWordPhrases.map((p) => `"${p}"`).join(", ");
-      throw new Error(
-        `Multi-word terms must be wrapped in quotes: ${quoted}`
-      );
+      throw new Error(`Multi-word terms must be wrapped in quotes: ${quoted}`);
     } else {
       const phrase = multiWordPhrases[0];
       const words = phrase.split(" ");
       throw new Error(
-        `Multi-word search "${phrase}" must use AND/OR operators or quotes. Examples: '${words.join(" AND ")}' or '"${phrase}"'`
+        `Multi-word search "${phrase}" must use AND/OR operators or quotes. Examples: '${words.join(" AND ")}' or '"${phrase}"'`,
       );
     }
   }
@@ -401,7 +366,7 @@ async function main() {
         tools: {},
         resources: {},
       },
-    }
+    },
   );
 
   // List available tools
@@ -475,8 +440,7 @@ async function main() {
         // Cloze card tools disabled — handlers remain below for re-enablement
         {
           name: "create-programming-card",
-          description:
-            "Create a new programming language function card.",
+          description: "Create a new programming language function card.",
           inputSchema: {
             type: "object",
             properties: {
@@ -487,13 +451,11 @@ async function main() {
               },
               programmingLanguage: {
                 type: "string",
-                description:
-                  "Programming language name, e.g. Java, JavaScript, Python, Ruby, Scala, SQL",
+                description: "Programming language name, e.g. Java, JavaScript, Python, Ruby, Scala, SQL",
               },
               returnType: {
                 type: "string",
-                description:
-                  "Return type of the function, e.g. 'void', 'Array', 'K', 'T.nilable(ErrorCategoryType)'",
+                description: "Return type of the function, e.g. 'void', 'Array', 'K', 'T.nilable(ErrorCategoryType)'",
               },
               functionDescription: {
                 type: "string",
@@ -513,7 +475,7 @@ async function main() {
               input: {
                 type: "string",
                 description:
-                  "Concrete setup code with specific variable/data definitions (not just imports). Must provide enough context that, combined with the transformation result, the function call can be deduced. E.g. 'arr = [\"a\", nil, \"b\", nil, \"c\"]' rather than just 'import math'. May use HTML (<div>, <br>) for formatting",
+                  'Concrete setup code with specific variable/data definitions (not just imports). Must provide enough context that, combined with the transformation result, the function call can be deduced. E.g. \'arr = ["a", nil, "b", nil, "c"]\' rather than just \'import math\'. May use HTML (<div>, <br>) for formatting',
               },
               inputTransformation: {
                 type: "string",
@@ -523,17 +485,15 @@ async function main() {
               transformationResult: {
                 type: "string",
                 description:
-                  "The expected output/result of the function call on the input. Must be specific to the concrete input provided, e.g. '[\"a\", \"b\", \"c\"]' for the compact example",
+                  'The expected output/result of the function call on the input. Must be specific to the concrete input provided, e.g. \'["a", "b", "c"]\' for the compact example',
               },
               timeComplexity: {
                 type: "string",
-                description:
-                  "Big-O time complexity using LaTeX, e.g. 'O(\\log(n))', 'O(n)'",
+                description: "Big-O time complexity using LaTeX, e.g. 'O(\\log(n))', 'O(n)'",
               },
               complexitySpecification: {
                 type: "string",
-                description:
-                  "Definitions of variables used in complexity expressions",
+                description: "Definitions of variables used in complexity expressions",
               },
               context: {
                 type: "string",
@@ -544,18 +504,12 @@ async function main() {
                 description: "Source reference for the card content",
               },
             },
-            required: [
-              "functionName",
-              "programmingLanguage",
-              "returnType",
-              "functionDescription",
-            ],
+            required: ["functionName", "programmingLanguage", "returnType", "functionDescription"],
           },
         },
         {
           name: "update-programming-card",
-          description:
-            "Update an existing programming language function card",
+          description: "Update an existing programming language function card",
           inputSchema: {
             type: "object",
             properties: {
@@ -570,13 +524,11 @@ async function main() {
               },
               programmingLanguage: {
                 type: "string",
-                description:
-                  "Programming language name, e.g. Java, JavaScript, Python, Ruby, Scala, SQL",
+                description: "Programming language name, e.g. Java, JavaScript, Python, Ruby, Scala, SQL",
               },
               returnType: {
                 type: "string",
-                description:
-                  "Return type of the function, e.g. 'void', 'Array', 'K', 'T.nilable(ErrorCategoryType)'",
+                description: "Return type of the function, e.g. 'void', 'Array', 'K', 'T.nilable(ErrorCategoryType)'",
               },
               functionDescription: {
                 type: "string",
@@ -585,13 +537,11 @@ async function main() {
               },
               library: {
                 type: "string",
-                description:
-                  "Library, package, module, or class the function belongs to, e.g. 'Array', 'NavigableMap'",
+                description: "Library, package, module, or class the function belongs to, e.g. 'Array', 'NavigableMap'",
               },
               arguments: {
                 type: "string",
-                description:
-                  "Typed argument list using the language's style, e.g. 'K key'",
+                description: "Typed argument list using the language's style, e.g. 'K key'",
               },
               input: {
                 type: "string",
@@ -600,8 +550,7 @@ async function main() {
               },
               inputTransformation: {
                 type: "string",
-                description:
-                  "The actual function call showing how the function is invoked on the input",
+                description: "The actual function call showing how the function is invoked on the input",
               },
               transformationResult: {
                 type: "string",
@@ -610,13 +559,11 @@ async function main() {
               },
               timeComplexity: {
                 type: "string",
-                description:
-                  "Big-O time complexity using LaTeX, e.g. 'O(\\log(n))', 'O(n)'",
+                description: "Big-O time complexity using LaTeX, e.g. 'O(\\log(n))', 'O(n)'",
               },
               complexitySpecification: {
                 type: "string",
-                description:
-                  "Definitions of variables used in complexity expressions",
+                description: "Definitions of variables used in complexity expressions",
               },
               context: {
                 type: "string",
@@ -639,8 +586,7 @@ async function main() {
             properties: {
               title: {
                 type: "string",
-                description:
-                  "Short title for the problem, e.g. 'LRU Cache', 'Longest Palindromic Subsequence'",
+                description: "Short title for the problem, e.g. 'LRU Cache', 'Longest Palindromic Subsequence'",
               },
               question: {
                 type: "string",
@@ -650,7 +596,7 @@ async function main() {
               exampleInputOutput: {
                 type: "string",
                 description:
-                  "Concrete example inputs and their expected outputs, e.g. '\"bbbab\" => 4 (\"bbbb\")'. May use HTML for formatting",
+                  'Concrete example inputs and their expected outputs, e.g. \'"bbbab" => 4 ("bbbb")\'. May use HTML for formatting',
               },
               insight: {
                 type: "string",
@@ -659,13 +605,11 @@ async function main() {
               },
               timeComplexity: {
                 type: "string",
-                description:
-                  "Big-O time complexity of the solution using LaTeX, e.g. 'O(n^2)', 'O(1)'",
+                description: "Big-O time complexity of the solution using LaTeX, e.g. 'O(n^2)', 'O(1)'",
               },
               spaceComplexity: {
                 type: "string",
-                description:
-                  "Big-O space complexity of the solution using LaTeX, e.g. 'O(n^2)', 'O(c)'",
+                description: "Big-O space complexity of the solution using LaTeX, e.g. 'O(n^2)', 'O(c)'",
               },
               additionalCriteria: {
                 type: "string",
@@ -689,8 +633,7 @@ async function main() {
               },
               solutionAlgorithm: {
                 type: "string",
-                description:
-                  "The solution code. May use HTML for formatting",
+                description: "The solution code. May use HTML for formatting",
               },
               context: {
                 type: "string",
@@ -698,18 +641,10 @@ async function main() {
               },
               source: {
                 type: "string",
-                description:
-                  "Source URLs for the problem, e.g. LeetCode links",
+                description: "Source URLs for the problem, e.g. LeetCode links",
               },
             },
-            required: [
-              "title",
-              "question",
-              "exampleInputOutput",
-              "insight",
-              "timeComplexity",
-              "spaceComplexity",
-            ],
+            required: ["title", "question", "exampleInputOutput", "insight", "timeComplexity", "spaceComplexity"],
           },
         },
         {
@@ -728,18 +663,15 @@ async function main() {
               },
               question: {
                 type: "string",
-                description:
-                  "The interview question/problem statement. May use HTML for formatting",
+                description: "The interview question/problem statement. May use HTML for formatting",
               },
               exampleInputOutput: {
                 type: "string",
-                description:
-                  "Concrete example inputs and their expected outputs",
+                description: "Concrete example inputs and their expected outputs",
               },
               insight: {
                 type: "string",
-                description:
-                  "The key insight or approach needed to solve the problem",
+                description: "The key insight or approach needed to solve the problem",
               },
               timeComplexity: {
                 type: "string",
@@ -755,13 +687,11 @@ async function main() {
               },
               insightExplanation: {
                 type: "string",
-                description:
-                  "Detailed explanation of the insight/approach. May use HTML and LaTeX",
+                description: "Detailed explanation of the insight/approach. May use HTML and LaTeX",
               },
               complexitySpecifications: {
                 type: "string",
-                description:
-                  "Definitions of variables used in complexity expressions",
+                description: "Definitions of variables used in complexity expressions",
               },
               keyDataStructure: {
                 type: "string",
@@ -792,13 +722,11 @@ async function main() {
             properties: {
               query: {
                 type: "string",
-                description:
-                  "Anki search query string",
+                description: "Anki search query string",
               },
               offset: {
                 type: "number",
-                description:
-                  "Number of results to skip (for pagination)",
+                description: "Number of results to skip (for pagination)",
               },
             },
             required: ["query"],
@@ -814,13 +742,7 @@ async function main() {
 
     try {
       if (name === "create-basic-card") {
-        const {
-          front,
-          back,
-          context = "",
-          extra = "",
-          source = "",
-        } = CreateCardArgumentsSchema.parse(args);
+        const { front, back, context = "", extra = "", source = "" } = CreateCardArgumentsSchema.parse(args);
 
         const validated = await validateCard(front, back, extra);
         const wasFixed = validated.front !== front || validated.back !== back || validated.extra !== extra;
@@ -858,14 +780,7 @@ async function main() {
       }
 
       if (name === "update-basic-card") {
-        const {
-          noteId,
-          front,
-          back,
-          context,
-          extra,
-          source,
-        } = UpdateCardArgumentsSchema.parse(args);
+        const { noteId, front, back, context, extra, source } = UpdateCardArgumentsSchema.parse(args);
 
         const noteInfo = await ankiRequest<any[]>("notesInfo", {
           notes: [noteId],
@@ -876,9 +791,7 @@ async function main() {
         }
 
         if (!noteInfo[0].tags.includes(MCP_TAG)) {
-          throw new Error(
-            "This note was not created by the MCP tool and cannot be updated"
-          );
+          throw new Error("This note was not created by the MCP tool and cannot be updated");
         }
 
         const fields: Record<string, string> = {};
@@ -909,18 +822,11 @@ async function main() {
       }
 
       if (name === "create-cloze-card") {
-        const {
-          text,
-          backExtra = "",
-          context = "",
-          source = "",
-        } = CreateClozeCardArgumentsSchema.parse(args);
+        const { text, backExtra = "", context = "", source = "" } = CreateClozeCardArgumentsSchema.parse(args);
 
         // Validate that the text contains at least one cloze deletion
         if (!text.includes("{{c") || !text.includes("}}")) {
-          throw new Error(
-            "Text must contain at least one cloze deletion using {{c1::text}} syntax"
-          );
+          throw new Error("Text must contain at least one cloze deletion using {{c1::text}} syntax");
         }
 
         const fields: Record<string, string> = {
@@ -950,8 +856,7 @@ async function main() {
       }
 
       if (name === "update-cloze-card") {
-        const { noteId, text, backExtra, context, source } =
-          UpdateClozeCardArgumentsSchema.parse(args);
+        const { noteId, text, backExtra, context, source } = UpdateClozeCardArgumentsSchema.parse(args);
 
         // Get the current note info to verify it's a cloze note
         const noteInfo = await ankiRequest<any[]>("notesInfo", {
@@ -963,9 +868,7 @@ async function main() {
         }
 
         if (!noteInfo[0].tags.includes(MCP_TAG)) {
-          throw new Error(
-            "This note was not created by the MCP tool and cannot be updated"
-          );
+          throw new Error("This note was not created by the MCP tool and cannot be updated");
         }
 
         if (noteInfo[0].modelName !== "2 Cloze") {
@@ -977,9 +880,7 @@ async function main() {
         if (text) {
           // Validate that the text contains at least one cloze deletion
           if (!text.includes("{{c") || !text.includes("}}")) {
-            throw new Error(
-              "Text must contain at least one cloze deletion using {{c1::text}} syntax"
-            );
+            throw new Error("Text must contain at least one cloze deletion using {{c1::text}} syntax");
           }
           fields["\u2B50Text"] = text;
         }
@@ -1033,10 +934,8 @@ async function main() {
         if (library) fields["\uD83D\uDD39Library/Package"] = library;
         if (funcArguments) fields["\uD83D\uDD39Arguments"] = funcArguments;
         if (input) fields["\uD83D\uDD39Input"] = input;
-        if (inputTransformation)
-          fields["\uD83D\uDD39Input Transformation"] = inputTransformation;
-        if (transformationResult)
-          fields["Transformation Result"] = transformationResult;
+        if (inputTransformation) fields["\uD83D\uDD39Input Transformation"] = inputTransformation;
+        if (transformationResult) fields["Transformation Result"] = transformationResult;
         if (timeComplexity) fields["\uD83D\uDD39Time Complexity"] = timeComplexity;
         if (complexitySpecification) fields["Complexity Specification"] = complexitySpecification;
         if (context) fields["Context \uD83D\uDCA1"] = context;
@@ -1089,39 +988,28 @@ async function main() {
         }
 
         if (!noteInfo[0].tags.includes(MCP_TAG)) {
-          throw new Error(
-            "This note was not created by the MCP tool and cannot be updated"
-          );
+          throw new Error("This note was not created by the MCP tool and cannot be updated");
         }
 
         if (noteInfo[0].modelName !== "7 Programming Language Function") {
-          throw new Error(
-            "This note is not a programming language function note"
-          );
+          throw new Error("This note is not a programming language function note");
         }
 
         const fields: Record<string, string> = {};
-        if (functionName !== undefined)
-          fields["\u2B50Function Name"] = functionName;
+        if (functionName !== undefined) fields["\u2B50Function Name"] = functionName;
         if (programmingLanguage !== undefined)
           fields[
             "\u2B50\uD83D\uDD33Programming Language (Excel / Java / JavaScript / Python / R / Ruby / Scala / SQL)"
           ] = programmingLanguage;
         if (returnType !== undefined) fields["\u2B50Return Type"] = returnType;
-        if (functionDescription !== undefined)
-          fields["\u2B50Function Description"] = functionDescription;
+        if (functionDescription !== undefined) fields["\u2B50Function Description"] = functionDescription;
         if (library !== undefined) fields["\uD83D\uDD39Library/Package"] = library;
-        if (funcArguments !== undefined)
-          fields["\uD83D\uDD39Arguments"] = funcArguments;
+        if (funcArguments !== undefined) fields["\uD83D\uDD39Arguments"] = funcArguments;
         if (input !== undefined) fields["\uD83D\uDD39Input"] = input;
-        if (inputTransformation !== undefined)
-          fields["\uD83D\uDD39Input Transformation"] = inputTransformation;
-        if (transformationResult !== undefined)
-          fields["Transformation Result"] = transformationResult;
-        if (timeComplexity !== undefined)
-          fields["\uD83D\uDD39Time Complexity"] = timeComplexity;
-        if (complexitySpecification !== undefined)
-          fields["Complexity Specification"] = complexitySpecification;
+        if (inputTransformation !== undefined) fields["\uD83D\uDD39Input Transformation"] = inputTransformation;
+        if (transformationResult !== undefined) fields["Transformation Result"] = transformationResult;
+        if (timeComplexity !== undefined) fields["\uD83D\uDD39Time Complexity"] = timeComplexity;
+        if (complexitySpecification !== undefined) fields["Complexity Specification"] = complexitySpecification;
         if (context !== undefined) fields["Context \uD83D\uDCA1"] = context;
         if (source !== undefined) fields["Source \uD83C\uDFAF"] = source;
 
@@ -1223,9 +1111,7 @@ async function main() {
         }
 
         if (!noteInfo[0].tags.includes(MCP_TAG)) {
-          throw new Error(
-            "This note was not created by the MCP tool and cannot be updated"
-          );
+          throw new Error("This note was not created by the MCP tool and cannot be updated");
         }
 
         if (noteInfo[0].modelName !== "8 Interview Question") {
@@ -1315,9 +1201,10 @@ async function main() {
 
         const rangeStart = offset + 1;
         const rangeEnd = offset + allNotes.length;
-        let header = totalCount > SEARCH_PAGE_SIZE
-          ? `Showing ${rangeStart}-${rangeEnd} of ${totalCount} notes`
-          : `Found ${totalCount} note(s)`;
+        let header =
+          totalCount > SEARCH_PAGE_SIZE
+            ? `Showing ${rangeStart}-${rangeEnd} of ${totalCount} notes`
+            : `Found ${totalCount} note(s)`;
         if (rangeEnd < totalCount) {
           header += `\nUse offset: ${offset + SEARCH_PAGE_SIZE} to see the next page`;
         }
@@ -1336,9 +1223,7 @@ async function main() {
     } catch (error) {
       if (error instanceof z.ZodError) {
         throw new Error(
-          `Invalid arguments: ${error.errors
-            .map((e) => `${e.path.join(".")}: ${e.message}`)
-            .join(", ")}`
+          `Invalid arguments: ${error.errors.map((e) => `${e.path.join(".")}: ${e.message}`).join(", ")}`,
         );
       }
       if ((error as any).ankiError) {
@@ -1376,7 +1261,7 @@ async function main() {
           {
             uri,
             mimeType: "text/plain",
-            text: "You must follow the rules below when creating flashcards.\n" + RULES + "\n" + EXTRA_RULES,
+            text: `You must follow the rules below when creating flashcards.\n${RULES}\n${EXTRA_RULES}`,
           },
         ],
       };

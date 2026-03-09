@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { validateSearchQuery, prepareSearchQuery } from "./index.js";
+import { describe, expect, it } from "vitest";
+import { prepareSearchQuery, validateSearchQuery } from "./index.js";
 
 describe("validateSearchQuery", () => {
   // --- Should pass ---
@@ -56,14 +56,12 @@ describe("validateSearchQuery", () => {
 
   it("rejects bare multi-word query without operators and suggests AND/OR", () => {
     expect(() => validateSearchQuery("binary tree")).toThrow(
-      'Multi-word search "binary tree" must use AND/OR operators or quotes. Examples: \'binary AND tree\' or \'"binary tree"\'',
+      "Multi-word search \"binary tree\" must use AND/OR operators or quotes. Examples: 'binary AND tree' or '\"binary tree\"'",
     );
   });
 
   it("rejects three bare words without operators and suggests AND/OR", () => {
-    expect(() => validateSearchQuery("red black tree")).toThrow(
-      "must use AND/OR operators or quotes",
-    );
+    expect(() => validateSearchQuery("red black tree")).toThrow("must use AND/OR operators or quotes");
   });
 
   it("rejects multi-word segments with operators and lists all that need quotes", () => {
@@ -73,9 +71,7 @@ describe("validateSearchQuery", () => {
   });
 
   it("rejects bare words even with extra spaces", () => {
-    expect(() => validateSearchQuery("binary   tree")).toThrow(
-      "must use AND/OR operators or quotes",
-    );
+    expect(() => validateSearchQuery("binary   tree")).toThrow("must use AND/OR operators or quotes");
   });
 
   it("rejects multi-word segment mixed with single words and OR", () => {
@@ -137,6 +133,8 @@ describe("prepareSearchQuery", () => {
   });
 
   it("prefixes bare word mixed with quoted phrases and OR", () => {
-    expect(prepareSearchQuery('"system design" OR "distributed systems" OR scalability')).toBe('"system design" OR "distributed systems" OR w:scalability');
+    expect(prepareSearchQuery('"system design" OR "distributed systems" OR scalability')).toBe(
+      '"system design" OR "distributed systems" OR w:scalability',
+    );
   });
 });
