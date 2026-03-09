@@ -54,27 +54,33 @@ describe("validateSearchQuery", () => {
 
   // --- Should fail ---
 
-  it("rejects bare multi-word query without operators", () => {
+  it("rejects bare multi-word query without operators and suggests AND/OR", () => {
     expect(() => validateSearchQuery("binary tree")).toThrow(
-      "Multi-word searches must use AND/OR"
+      'Multi-word search "binary tree" must use AND/OR operators or quotes. Examples: \'binary AND tree\' or \'"binary tree"\'',
     );
   });
 
-  it("rejects three bare words without operators", () => {
+  it("rejects three bare words without operators and suggests AND/OR", () => {
     expect(() => validateSearchQuery("red black tree")).toThrow(
-        "Multi-word searches must use AND/OR"
+      "must use AND/OR operators or quotes",
     );
   });
 
-  it("rejects three bare words without operators", () => {
+  it("rejects multi-word segments with operators and lists all that need quotes", () => {
     expect(() => validateSearchQuery("system design OR distributed systems OR scalability")).toThrow(
-        "Multi-word searches must use AND/OR"
+      'Multi-word terms must be wrapped in quotes: "system design", "distributed systems"',
     );
   });
 
   it("rejects bare words even with extra spaces", () => {
     expect(() => validateSearchQuery("binary   tree")).toThrow(
-      "Multi-word searches must use AND/OR"
+      "must use AND/OR operators or quotes",
+    );
+  });
+
+  it("rejects multi-word segment mixed with single words and OR", () => {
+    expect(() => validateSearchQuery("kubernetes pod OR deployment")).toThrow(
+      'Multi-word terms must be wrapped in quotes: "kubernetes pod"',
     );
   });
 });

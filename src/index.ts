@@ -14,7 +14,7 @@ import * as path from "path";
 // Constants
 const ANKI_CONNECT_URL = "http://localhost:8765";
 const SEARCH_PAGE_SIZE = 100;
-const DEFAULT_DECK = "z::1 \u221E (manual catch-all)";
+const DEFAULT_DECK = "z::0 mcp";
 const MCP_TAG = "mcp_generated";
 
 // Type definitions for Anki responses
@@ -36,11 +36,8 @@ interface AnkiResponse<T> {
 const CreateCardArgumentsSchema = z.object({
   front: z.string(),
   back: z.string(),
-  addReverse: z.string().optional(),
   context: z.string().optional(),
   extra: z.string().optional(),
-  abbrevShort: z.string().optional(),
-  addTypeFront: z.string().optional(),
   source: z.string().optional(),
 });
 
@@ -49,18 +46,14 @@ const CreateClozeCardArgumentsSchema = z.object({
   backExtra: z.string().optional(),
   context: z.string().optional(),
   source: z.string().optional(),
-  addReverse: z.string().optional(),
 });
 
 const UpdateCardArgumentsSchema = z.object({
   noteId: z.number(),
   front: z.string().optional(),
   back: z.string().optional(),
-  addReverse: z.string().optional(),
   context: z.string().optional(),
   extra: z.string().optional(),
-  abbrevShort: z.string().optional(),
-  addTypeFront: z.string().optional(),
   source: z.string().optional(),
 });
 
@@ -70,7 +63,6 @@ const UpdateClozeCardArgumentsSchema = z.object({
   backExtra: z.string().optional(),
   context: z.string().optional(),
   source: z.string().optional(),
-  addReverse: z.string().optional(),
 });
 
 const CreateProgrammingCardArgumentsSchema = z.object({
@@ -120,7 +112,6 @@ const CreateInterviewCardArgumentsSchema = z.object({
   solutionAlgorithm: z.string().optional(),
   context: z.string().optional(),
   source: z.string().optional(),
-  addReverse: z.string().optional(),
 });
 
 const UpdateInterviewCardArgumentsSchema = z.object({
@@ -138,7 +129,6 @@ const UpdateInterviewCardArgumentsSchema = z.object({
   solutionAlgorithm: z.string().optional(),
   context: z.string().optional(),
   source: z.string().optional(),
-  addReverse: z.string().optional(),
 });
 
 const SearchCollectionArgumentsSchema = z.object({
@@ -205,7 +195,9 @@ async function ankiRequest<T>(
               console.error("Parsed response:", parsedData);
 
               if (parsedData.error) {
-                reject(new Error(`AnkiConnect error: ${parsedData.error}`));
+                const err = new Error(`AnkiConnect error: ${parsedData.error}`);
+                (err as any).ankiError = true;
+                reject(err);
                 return;
               }
 
@@ -251,7 +243,7 @@ async function ankiRequest<T>(
 
       return result;
     } catch (error) {
-      if (attempt === retries) {
+      if ((error as any).ankiError || attempt === retries) {
         throw error;
       }
       console.error(
@@ -271,26 +263,38 @@ const GEMINI_API_KEY = fs
   .readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), "..", ".gemini-api-key"), "utf-8")
   .trim();
 
-const RULES = `Rules:
-"""
-* Be clear and specific in the 'front' field. Ask only a single question that can be answered by the user. Multiple potential answers to this question are OK (but in this case you must ask for "a," "one of," "an example," etc. in this field).
-* Be brief and simple in the 'back' field. There must either be (a) only a single possible answer to the question in this field or (b) an exhaustive list.
+const RULES = `
+* Be clear and specific in the 'front' field. Ask only a single question that can be answered by the user. If there are multiple potential answers to this question, you must ask for "a," "one of," "an example," etc. in this field -- you cannot ask for a full list or parts of an answer.
+* Be brief and simple in the 'back' field. There must either be (a) only a single possible answer to the question in this field or (b) an exhaustive list. If (b), the 'front' could have only asked for a single item of this list.
 * Provide more detailed contextual information in the 'extra' field (up to 3 sentences).
 * For all fields, try to simplify text structure as much as possible -- the user wants to optimize for fast reviews, and the more 'filler' text that is contained, the worse things are.
 * Questions should NEVER ask for only a concrete numerical value, like a specific percentage.
 * An answer should NEVER be only a specific command, function name, class name.
-"""`
+`
+
+const EXTRA_RULES = `
+If you need to style elements in fields, ALWAYS use HTML. For example:
+  * use \`<code>functionCall();</code>\` when wanting to show code or other monospaced output (like bash commands)
+  * use \`<i>the i element</i>\` when wanting to use italics
+  * use HTML lists (\`<ul><li>item</li></ul>\`) when listing multiple items, especially if they are the answer to a question`
 
 const VALIDATION_PROMPT = `What follows is a list of rules for creation of flashcards, as well as an example flashcard. Your task is to evaluate if the example flashcard follows the rules. Output a JSON dictionary with two keys: a \`result\` key, which contains \`true\` or \`false\`, for whether the rules were mostly followed. And \`details\`, that is a very short description of what rules, if any, were violated.
 
+Rules:
+"""
 ${RULES}
+"""
 
 Example flashcard:
 """`;
 
 const AUTOFIX_PROMPT = `You are given a flashcard that violates formatting rules. Fix the card to comply with the rules and return ONLY a JSON object with "front", "back", and "extra" keys containing the corrected values. Do not include any other text.
 
+Rules:
+"""
 ${RULES}
+${EXTRA_RULES}
+"""
 
 Violation details: `;
 
@@ -311,7 +315,7 @@ async function geminiRequest(model: string, prompt: string): Promise<string> {
   return data.candidates[0].content.parts[0].text;
 }
 
-async function validateCard(front: string, back: string, extra: string): Promise<{ front: string; back: string; extra: string }> {
+async function validateCard(front: string, back: string, extra: string): Promise<{ front: string; back: string; extra: string; details?: string }> {
   const cardJson = JSON.stringify({ front, back, extra });
   const validationText = `${VALIDATION_PROMPT}\n${cardJson}\n"""`;
   const raw = await geminiRequest("gemini-3-flash-preview", validationText);
@@ -327,12 +331,13 @@ async function validateCard(front: string, back: string, extra: string): Promise
   const fixRaw = await geminiRequest("gemini-3.1-pro-preview", fixPrompt);
   const fixed = JSON.parse(fixRaw);
   console.error("Card auto-fixed:", fixed);
-  return { front: fixed.front, back: fixed.back, extra: fixed.extra ?? extra };
+  return { front: fixed.front, back: fixed.back, extra: fixed.extra ?? extra, details: result.details };
 }
 
 export function validateSearchQuery(query: string): void {
-  // Split by AND/OR into segments, then check each segment for bare multi-word terms
+  const hasOperators = /\bAND\b|\bOR\b/.test(query);
   const segments = query.split(/\bAND\b|\bOR\b/);
+  const multiWordPhrases: string[] = [];
   for (const segment of segments) {
     const stripped = segment
       .replace(/-?"[^"]*"/g, "")
@@ -341,8 +346,20 @@ export function validateSearchQuery(query: string): void {
       .split(/\s+/)
       .filter((t) => t && !t.includes(":"));
     if (bareWords.length > 1) {
+      multiWordPhrases.push(bareWords.join(" "));
+    }
+  }
+  if (multiWordPhrases.length > 0) {
+    if (hasOperators) {
+      const quoted = multiWordPhrases.map((p) => `"${p}"`).join(", ");
       throw new Error(
-        'Multi-word searches must use AND/OR operators or quotes. Example: \'"binary tree"\' or \'btree OR "binary tree"\''
+        `Multi-word terms must be wrapped in quotes: ${quoted}`
+      );
+    } else {
+      const phrase = multiWordPhrases[0];
+      const words = phrase.split(" ");
+      throw new Error(
+        `Multi-word search "${phrase}" must use AND/OR operators or quotes. Examples: '${words.join(" AND ")}' or '"${phrase}"'`
       );
     }
   }
@@ -393,7 +410,7 @@ async function main() {
       tools: [
         {
           name: "create-basic-card",
-          description: "Create a new basic flashcard. Keep questions simple; avoid lists, sets, and enumerations; ask only a single question per card.",
+          description: `Create a new basic flashcard. You MUST follow these rules:\n${RULES}\n${EXTRA_RULES}`,
           inputSchema: {
             type: "object",
             properties: {
@@ -405,10 +422,6 @@ async function main() {
                 type: "string",
                 description: "Back side content of the card",
               },
-              addReverse: {
-                type: "string",
-                description: "Set to any non-empty value to also generate a reverse card (back-to-front)",
-              },
               context: {
                 type: "string",
                 description: "Contextual label shown on the card, e.g. a language name or category",
@@ -416,14 +429,6 @@ async function main() {
               extra: {
                 type: "string",
                 description: "Extra information shown on the back of the card",
-              },
-              abbrevShort: {
-                type: "string",
-                description: "Short abbreviation for the card",
-              },
-              addTypeFront: {
-                type: "string",
-                description: "Set to any non-empty value to add a type-in-the-answer field on the front",
               },
               source: {
                 type: "string",
@@ -451,10 +456,6 @@ async function main() {
                 type: "string",
                 description: "New back side content",
               },
-              addReverse: {
-                type: "string",
-                description: "Set to any non-empty value to also generate a reverse card (back-to-front)",
-              },
               context: {
                 type: "string",
                 description: "Contextual label shown on the card, e.g. a language name or category",
@@ -462,14 +463,6 @@ async function main() {
               extra: {
                 type: "string",
                 description: "Extra information shown on the back of the card",
-              },
-              abbrevShort: {
-                type: "string",
-                description: "Short abbreviation for the card",
-              },
-              addTypeFront: {
-                type: "string",
-                description: "Set to any non-empty value to add a type-in-the-answer field on the front",
               },
               source: {
                 type: "string",
@@ -708,10 +701,6 @@ async function main() {
                 description:
                   "Source URLs for the problem, e.g. LeetCode links",
               },
-              addReverse: {
-                type: "string",
-                description: "Set to create a reverse card as well",
-              },
             },
             required: [
               "title",
@@ -790,10 +779,6 @@ async function main() {
                 type: "string",
                 description: "Source URLs for the problem",
               },
-              addReverse: {
-                type: "string",
-                description: "Set to create a reverse card as well",
-              },
             },
             required: ["noteId"],
           },
@@ -801,7 +786,7 @@ async function main() {
         {
           name: "search-collection",
           description:
-            "Search the Anki collection for notes matching a query. Uses Anki's search syntax. You must use explicit AND/OR operators and quotes when searching for multiple words. Examples: '\"some text\" AND \"some other text\"'; 'B-tree OR \"binary tree\"'.",
+            "Search the Anki collection for notes matching a query. Rules: (1) Multiple terms MUST be joined with AND/OR. (2) Multi-word phrases MUST be wrapped in quotes. (3) A single word can be searched alone. Examples: 'kafka', 'PostgreSQL OR postgres', 'btree OR \"binary tree\"', '\"system design\" OR \"distributed systems\" OR scalability'.",
           inputSchema: {
             type: "object",
             properties: {
@@ -832,11 +817,8 @@ async function main() {
         const {
           front,
           back,
-          addReverse = "",
           context = "",
           extra = "",
-          abbrevShort = "",
-          addTypeFront = "",
           source = "",
         } = CreateCardArgumentsSchema.parse(args);
 
@@ -847,11 +829,8 @@ async function main() {
           Front: validated.front,
           Back: validated.back,
         };
-        if (addReverse) fields["\uD83D\uDD39Add Reverse \uD83D\uDD00"] = addReverse;
         if (context) fields["Context \uD83D\uDCA1"] = context;
         if (validated.extra) fields["Extra \u2795"] = validated.extra;
-        if (abbrevShort) fields["\uD83D\uDD39Abbrev Short \uD83C\uDD8E"] = abbrevShort;
-        if (addTypeFront) fields["\uD83D\uDD39Add Type Front \u2328\uFE0F"] = addTypeFront;
         if (source) fields["Source \uD83C\uDFAF"] = source;
 
         const noteId = await ankiRequest<number>("addNote", {
@@ -865,7 +844,7 @@ async function main() {
 
         let responseText = `Successfully created new card in deck "${DEFAULT_DECK}" (noteId: ${noteId})`;
         if (wasFixed) {
-          responseText += `\n\nNote: Card was auto-corrected for formatting.\nFront: ${validated.front}\nBack: ${validated.back}\nExtra: ${validated.extra}`;
+          responseText += `\n\nNote: Card was auto-corrected: ${validated.details}\nFront: ${validated.front}\nBack: ${validated.back}\nExtra: ${validated.extra}`;
         }
 
         return {
@@ -883,11 +862,8 @@ async function main() {
           noteId,
           front,
           back,
-          addReverse,
           context,
           extra,
-          abbrevShort,
-          addTypeFront,
           source,
         } = UpdateCardArgumentsSchema.parse(args);
 
@@ -908,11 +884,9 @@ async function main() {
         const fields: Record<string, string> = {};
         if (front !== undefined) fields.Front = front;
         if (back !== undefined) fields.Back = back;
-        if (addReverse !== undefined) fields["\uD83D\uDD39Add Reverse \uD83D\uDD00"] = addReverse;
+
         if (context !== undefined) fields["Context \uD83D\uDCA1"] = context;
         if (extra !== undefined) fields["Extra \u2795"] = extra;
-        if (abbrevShort !== undefined) fields["\uD83D\uDD39Abbrev Short \uD83C\uDD8E"] = abbrevShort;
-        if (addTypeFront !== undefined) fields["\uD83D\uDD39Add Type Front \u2328\uFE0F"] = addTypeFront;
         if (source !== undefined) fields["Source \uD83C\uDFAF"] = source;
 
         if (Object.keys(fields).length > 0) {
@@ -940,7 +914,6 @@ async function main() {
           backExtra = "",
           context = "",
           source = "",
-          addReverse = "",
         } = CreateClozeCardArgumentsSchema.parse(args);
 
         // Validate that the text contains at least one cloze deletion
@@ -956,7 +929,6 @@ async function main() {
         };
         if (context) fields["Context \uD83D\uDCA1"] = context;
         if (source) fields["Source \uD83C\uDFAF"] = source;
-        if (addReverse) fields["\uD83D\uDD39Add Reverse \uD83D\uDD00"] = addReverse;
 
         const noteId = await ankiRequest<number>("addNote", {
           note: {
@@ -978,7 +950,7 @@ async function main() {
       }
 
       if (name === "update-cloze-card") {
-        const { noteId, text, backExtra, context, source, addReverse } =
+        const { noteId, text, backExtra, context, source } =
           UpdateClozeCardArgumentsSchema.parse(args);
 
         // Get the current note info to verify it's a cloze note
@@ -1014,7 +986,6 @@ async function main() {
         if (backExtra !== undefined) fields["Extra Text"] = backExtra;
         if (context !== undefined) fields["Context \uD83D\uDCA1"] = context;
         if (source !== undefined) fields["Source \uD83C\uDFAF"] = source;
-        if (addReverse !== undefined) fields["\uD83D\uDD39Add Reverse \uD83D\uDD00"] = addReverse;
 
         if (Object.keys(fields).length > 0) {
           await ankiRequest("updateNoteFields", {
@@ -1188,7 +1159,6 @@ async function main() {
           solutionAlgorithm = "",
           context = "",
           source = "",
-          addReverse = "",
         } = CreateInterviewCardArgumentsSchema.parse(args);
 
         const fields: Record<string, string> = {
@@ -1206,7 +1176,6 @@ async function main() {
         if (solutionAlgorithm) fields["Solution Algorithm"] = solutionAlgorithm;
         if (context) fields["Context \uD83D\uDCA1"] = context;
         if (source) fields["Source \uD83C\uDFAF"] = source;
-        if (addReverse) fields["\uD83D\uDD39Add Reverse \uD83D\uDD00"] = addReverse;
 
         const noteId = await ankiRequest<number>("addNote", {
           note: {
@@ -1243,7 +1212,6 @@ async function main() {
           solutionAlgorithm,
           context,
           source,
-          addReverse,
         } = UpdateInterviewCardArgumentsSchema.parse(args);
 
         const noteInfo = await ankiRequest<any[]>("notesInfo", {
@@ -1278,7 +1246,6 @@ async function main() {
         if (solutionAlgorithm !== undefined) fields["Solution Algorithm"] = solutionAlgorithm;
         if (context !== undefined) fields["Context \uD83D\uDCA1"] = context;
         if (source !== undefined) fields["Source \uD83C\uDFAF"] = source;
-        if (addReverse !== undefined) fields["\uD83D\uDD39Add Reverse \uD83D\uDD00"] = addReverse;
 
         if (Object.keys(fields).length > 0) {
           await ankiRequest("updateNoteFields", {
@@ -1359,7 +1326,7 @@ async function main() {
           content: [
             {
               type: "text",
-              text: `${header}\n\n${formatted}\n\n---\nAll tags: ${tagsList}`,
+              text: `${header}\n\n${formatted}${tagsList ? `\n\n---\nAll tags: ${tagsList}` : ""}`,
             },
           ],
         };
@@ -1374,179 +1341,47 @@ async function main() {
             .join(", ")}`
         );
       }
-      throw error;
-    }
-  });
-
-  // Add resource handlers for listing decks
-  server.setRequestHandler(ListResourcesRequestSchema, async () => {
-    try {
-      const decks = await ankiRequest<string[]>("deckNames");
-      return {
-        resources: decks.map((deck) => ({
-          uri: `anki://deck/${encodeURIComponent(deck)}`,
-          name: deck,
-          description: `Anki deck: ${deck}`,
-        })),
-      };
-    } catch (error) {
-      console.error("Error listing resources:", error);
-      throw error;
-    }
-  });
-
-  // Add handler for reading deck contents
-  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-    try {
-      const uri = request.params.uri;
-      const match = uri.match(/^anki:\/\/deck\/(.+)$/);
-
-      if (!match) {
-        throw new Error(`Invalid resource URI: ${uri}`);
-      }
-
-      const deckName = decodeURIComponent(match[1]);
-      console.error(`Attempting to fetch cards for deck: ${deckName}`);
-
-      // Find all notes in the deck
-      const noteIds = await ankiRequest<number[]>("findNotes", {
-        query: `deck:${deckName}`,
-      });
-
-      console.error(`Found ${noteIds.length} notes in deck ${deckName}`);
-
-      if (noteIds.length === 0) {
+      if ((error as any).ankiError) {
         return {
-          contents: [
+          content: [
             {
-              uri,
-              mimeType: "text/plain",
-              text: `Deck: ${deckName}\n\nNo notes found in this deck.`,
+              type: "text",
+              text: (error as Error).message,
             },
           ],
+          isError: true,
         };
       }
+      throw error;
+    }
+  });
 
-      // Process notes in chunks of 5
-      const chunkSize = 5;
-      let allNotes: any[] = [];
+  server.setRequestHandler(ListResourcesRequestSchema, async () => {
+    return {
+      resources: [
+        {
+          uri: "anki://basic-card-creation-guidelines",
+          name: "Card Creation Guidelines",
+          description: "Rules and formatting guidelines for creating flashcards. Read before creating cards.",
+        },
+      ],
+    };
+  });
 
-      for (let i = 0; i < noteIds.length; i += chunkSize) {
-        const chunk = noteIds.slice(i, i + chunkSize);
-        console.error(
-          `Processing notes ${i + 1} to ${Math.min(
-            i + chunkSize,
-            noteIds.length
-          )}`
-        );
-
-        const chunkNotes = await ankiRequest<any[]>("notesInfo", {
-          notes: chunk,
-        });
-        allNotes = allNotes.concat(chunkNotes);
-      }
-
-      console.error(`Retrieved ${allNotes.length} notes total`);
-
-      // Debug log to see note structure
-      console.error(
-        "First note structure:",
-        JSON.stringify(allNotes[0], null, 2)
-      );
-      if (allNotes.length > 1) {
-        console.error(
-          "Second note structure:",
-          JSON.stringify(allNotes[1], null, 2)
-        );
-      }
-
-      // Map notes to our card format
-      const cardInfo: AnkiCard[] = allNotes.map((note) => {
-        if (note.modelName === "2 Cloze") {
-          return {
-            noteId: note.noteId,
-            fields: {
-              Front: { value: note.fields["\u2B50Text"].value },
-              Back: {
-                value: note.fields["Extra Text"].value || "[Cloze deletion]",
-              },
-            },
-            tags: note.tags,
-          };
-        } else if (note.modelName === "1 Basic") {
-          return {
-            noteId: note.noteId,
-            fields: {
-              Front: { value: note.fields.Front.value },
-              Back: { value: note.fields.Back.value },
-            },
-            tags: note.tags,
-          };
-        } else if (note.modelName === "7 Programming Language Function") {
-          return {
-            noteId: note.noteId,
-            fields: {
-              Front: {
-                value: `${note.fields["\u2B50Function Name"].value} (${note.fields["\u2B50\uD83D\uDD33Programming Language (Excel / Java / JavaScript / Python / R / Ruby / Scala / SQL)"].value})`,
-              },
-              Back: { value: note.fields["\u2B50Function Description"].value },
-            },
-            tags: note.tags,
-          };
-        } else if (note.modelName === "8 Interview Question") {
-          return {
-            noteId: note.noteId,
-            fields: {
-              Front: {
-                value: note.fields["\u2B50Title"].value,
-              },
-              Back: { value: note.fields["\u2B50Insight"].value },
-            },
-            tags: note.tags,
-          };
-        } else {
-          // Default case for unknown note types
-          console.error(`Unknown note type: ${note.modelName}`);
-          return {
-            noteId: note.noteId,
-            fields: {
-              Front: { value: "[Unknown note type]" },
-              Back: { value: "[Unknown note type]" },
-            },
-            tags: note.tags,
-          };
-        }
-      });
-
-      console.error(`Successfully retrieved info for ${cardInfo.length} cards`);
-
-      const deckContent = cardInfo
-        .map((card) => {
-          return `Note ID: ${card.noteId}\nFront: ${
-            card.fields.Front.value
-          }\nBack: ${card.fields.Back.value}\nTags: ${card.tags.join(
-            ", "
-          )}\n---`;
-        })
-        .join("\n");
-
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const uri = request.params.uri;
+    if (uri === "anki://basic-card-creation-guidelines") {
       return {
         contents: [
           {
             uri,
             mimeType: "text/plain",
-            text: `Deck: ${deckName}\n\n${deckContent}`,
+            text: "You must follow the rules below when creating flashcards.\n" + RULES + "\n" + EXTRA_RULES,
           },
         ],
       };
-    } catch (error) {
-      console.error(`Error reading deck: ${error}`);
-      throw new Error(
-        `Failed to read deck: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }. Make sure Anki is running and AnkiConnect plugin is installed.`
-      );
     }
+    throw new Error(`Invalid resource URI: ${uri}`);
   });
 
   // Start the server
