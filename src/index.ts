@@ -14,7 +14,7 @@ import { z } from "zod";
 // Constants
 const _ANKI_CONNECT_URL = "http://localhost:8765";
 const SEARCH_PAGE_SIZE = 100;
-const DEFAULT_DECK = "z::0 mcp";
+const DEFAULT_DECK = "z::1 \u221E (manual catch-all)::0 interview prep::0 mcp";
 const MCP_TAG = "mcp_generated";
 
 // Type definitions for Anki responses
@@ -37,6 +37,20 @@ const CreateClozeCardArgumentsSchema = z.object({
   backExtra: z.string().optional(),
   context: z.string().optional(),
   source: z.string().optional(),
+});
+
+const ClozeTableCellSchema = z.object({
+  value: z.string(),
+  hint: z.string().optional(),
+});
+
+const CreateClozeTableArgumentsSchema = z.object({
+  headers: z.array(z.string()),
+  rows: z.array(z.array(ClozeTableCellSchema)),
+  context: z.string().optional(),
+  source: z.string().optional(),
+  selectedAttributes: z.array(z.number()).optional(),
+  clozeItems: z.boolean().optional(),
 });
 
 const UpdateCardArgumentsSchema = z.object({
@@ -126,6 +140,92 @@ const SearchCollectionArgumentsSchema = z.object({
   query: z.string(),
   offset: z.number().optional().default(0),
 });
+
+// Helper functions for cloze table generation
+type ClozeTableCell = z.infer<typeof ClozeTableCellSchema>;
+
+export function validatePlaceholders(headers: string[], rows: ClozeTableCell[][]): string | null {
+  for (const header of headers) {
+    if (header.includes("__") && !header.endsWith("?") && !header.endsWith(":")) {
+      return `"${header}" contains "__" but must end with "?" or ":"`;
+    }
+  }
+  for (let i = 0; i < rows.length; i++) {
+    for (const cell of rows[i]) {
+      if (cell.value.includes("__") && !cell.value.endsWith("?") && !cell.value.endsWith(":")) {
+        return `Cell "${cell.value}" in row ${i + 1} contains "__" but must end with "?" or ":"`;
+      }
+    }
+  }
+  return null;
+}
+
+export function transposeTable(
+  headers: string[],
+  rows: ClozeTableCell[][],
+): { headers: string[]; rows: ClozeTableCell[][] } {
+  if (headers.length <= rows.length) {
+    return { headers, rows };
+  }
+  const newHeaders = ["", ...rows.map((r) => r[0].value)];
+  const newRows: ClozeTableCell[][] = [];
+  for (let col = 1; col < headers.length; col++) {
+    const newRow: ClozeTableCell[] = [{ value: headers[col] }];
+    for (const row of rows) {
+      newRow.push(row[col] ?? { value: "" });
+    }
+    newRows.push(newRow);
+  }
+  return { headers: newHeaders, rows: newRows };
+}
+
+export function generateClozeTable(
+  headers: string[],
+  rows: ClozeTableCell[][],
+  clozeCells?: Set<string>,
+  clozeHeaders?: Set<number>,
+): string {
+  let clozeNum = 1;
+  const lines: string[] = [];
+  lines.push("<table>");
+  lines.push("  <thead>");
+  lines.push("    <tr>");
+  for (let i = 0; i < headers.length; i++) {
+    const header = headers[i];
+    const shouldCloze =
+      clozeCells !== undefined ? (clozeHeaders?.has(i) ?? false) : header !== "" && !header.includes("__");
+    if (shouldCloze) {
+      lines.push(`      <th>{{c${clozeNum}::${header}}}</th>`);
+      clozeNum++;
+    } else {
+      lines.push(`      <th>${header}</th>`);
+    }
+  }
+  lines.push("    </tr>");
+  lines.push("  </thead>");
+  lines.push("  <tbody>");
+  for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+    lines.push("    <tr>");
+    for (let colIdx = 0; colIdx < rows[rowIdx].length; colIdx++) {
+      const cell = rows[rowIdx][colIdx];
+      const shouldCloze =
+        clozeCells !== undefined
+          ? clozeCells.has(`${rowIdx},${colIdx}`)
+          : cell.value !== "" && !cell.value.includes("__");
+      if (shouldCloze) {
+        const cloze = cell.hint ? `{{c${clozeNum}::${cell.value}::${cell.hint}}}` : `{{c${clozeNum}::${cell.value}}}`;
+        lines.push(`      <td>${cloze}</td>`);
+        clozeNum++;
+      } else {
+        lines.push(`      <td>${cell.value}</td>`);
+      }
+    }
+    lines.push("    </tr>");
+  }
+  lines.push("  </tbody>");
+  lines.push("</table>");
+  return lines.join("\n");
+}
 
 // Helper function for making AnkiConnect requests with retries
 async function ankiRequest<T>(action: string, params: Record<string, any> = {}, retries = 3, delay = 1000): Promise<T> {
@@ -237,6 +337,7 @@ const RULES = `
 * For all fields, try to simplify text structure as much as possible -- the user wants to optimize for fast reviews, and the more 'filler' text that is contained, the worse things are.
 * Questions should NEVER ask for only a concrete numerical value, like a specific percentage.
 * An answer should NEVER be only a specific command, function name, class name.
+* Whenever displaying math equations, variables, etc. use LaTeX, surrounded by delimiters \`\\(...\\)\` / \`\\[...\\]\` for inline / displayed symbols respectively.
 `;
 
 const EXTRA_RULES = `
@@ -303,6 +404,63 @@ async function validateCard(
   const fixed = JSON.parse(fixRaw);
   console.error("Card auto-fixed:", fixed);
   return { front: fixed.front, back: fixed.back, extra: fixed.extra ?? extra, details: result.details };
+}
+
+async function reformulatePlaceholders(
+  headers: string[],
+  rows: ClozeTableCell[][],
+): Promise<{ headers: string[]; rows: ClozeTableCell[][] }> {
+  const placeholders: { location: string; index: number; value: string }[] = [];
+  for (let i = 0; i < headers.length; i++) {
+    if (headers[i].includes("__")) {
+      placeholders.push({ location: "header", index: i, value: headers[i] });
+    }
+  }
+  for (let i = 0; i < rows.length; i++) {
+    for (let j = 0; j < rows[i].length; j++) {
+      if (rows[i][j].value.includes("__")) {
+        placeholders.push({ location: `row${i}_col${j}`, index: -1, value: rows[i][j].value });
+      }
+    }
+  }
+
+  if (placeholders.length === 0) {
+    return { headers, rows };
+  }
+
+  const prompt = `You are reformulating table header/label text for Anki flashcard cloze tables. Each string contains "__" (double underscore) which is a placeholder that gets replaced with a value during review.
+
+Your job: rewrite each string to sound natural and read like a clear question or prompt. Keep "__" exactly as-is in the output. Each string must still end with "?" or ":".
+
+Keep them concise — these appear in a table, so brevity matters. Do not add filler words.
+
+Return a JSON array of strings in the same order, one per input.
+
+Input strings:
+${JSON.stringify(placeholders.map((p) => p.value))}`;
+
+  const raw = await geminiRequest("gemini-3.1-pro-preview", prompt);
+  const reformulated: string[] = JSON.parse(raw);
+  console.error("Reformulated placeholders:", reformulated);
+
+  const newHeaders = [...headers];
+  const newRows = rows.map((r) => r.map((c) => ({ ...c })));
+
+  let idx = 0;
+  for (const p of placeholders) {
+    const newValue = reformulated[idx] ?? p.value;
+    if (p.location === "header") {
+      newHeaders[p.index] = newValue;
+    } else {
+      const match = p.location.match(/^row(\d+)_col(\d+)$/);
+      if (match) {
+        newRows[Number(match[1])][Number(match[2])].value = newValue;
+      }
+    }
+    idx++;
+  }
+
+  return { headers: newHeaders, rows: newRows };
 }
 
 export function validateSearchQuery(query: string): void {
@@ -730,6 +888,57 @@ async function main() {
               },
             },
             required: ["query"],
+          },
+        },
+        {
+          name: "create-cloze-table",
+          description:
+            'Create a cloze deletion card with an HTML table. ALL body cells are wrapped in cloze deletions with auto-incrementing numbers. Each non-empty header MUST contain "__" (double underscore) as a placeholder — a JavaScript function on the card replaces "__" with the row\'s first-column value to form a question (e.g. "Who is the creator of __?" becomes "Who is the creator of UNIX?"). The first header is an empty string. CRITICAL ORIENTATION RULE: The items being compared (e.g. UNIX vs Linux, SQLite vs DuckDB) MUST be the ROW LABELS (first column of each row). The attributes/properties being compared across those items (e.g. creator, licensing, workload, storage layout) MUST be the HEADERS with "__" placeholders. Think of it as: rows = things, columns = attributes of those things. Example: comparing SQLite vs DuckDB → headers are ["", "Target workload of __:", "__ storage layout:", ...] and each row starts with "SQLite" or "DuckDB". IMPORTANT: Before calling this tool, you MUST (1) discuss with the user what headers and rows the table should contain, (2) show the user a preview of the table, and (3) get explicit confirmation before invoking this tool.',
+          inputSchema: {
+            type: "object",
+            properties: {
+              headers: {
+                type: "array",
+                items: { type: "string" },
+                description:
+                  'Table header labels representing ATTRIBUTES/PROPERTIES being compared. The first header should be an empty string. Every other header MUST contain "__" (double underscore) as a placeholder for the row label. Example: ["", "Who is the creator of __?", "__ licensing:"]',
+              },
+              rows: {
+                type: "array",
+                items: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      value: { type: "string", description: "Cell content (may include HTML)" },
+                      hint: { type: "string", description: "Optional cloze hint shown during review" },
+                    },
+                    required: ["value"],
+                  },
+                },
+                description:
+                  "Table rows. Each row represents one ITEM being compared (e.g. one technology, one concept). The first cell of each row is the item name/label. ALL cells (including the first column) are wrapped in cloze deletions.",
+              },
+              context: {
+                type: "string",
+                description: "Additional context shown on the card",
+              },
+              source: {
+                type: "string",
+                description: "Source reference for the card content",
+              },
+              selectedAttributes: {
+                type: "array",
+                items: { type: "number" },
+                description:
+                  "Indices of attributes to cloze (from the preview response). Omit on first call to get a preview.",
+              },
+              clozeItems: {
+                type: "boolean",
+                description: "Whether to cloze the item labels. Defaults to true.",
+              },
+            },
+            required: ["headers", "rows"],
           },
         },
       ],
@@ -1214,6 +1423,171 @@ async function main() {
             {
               type: "text",
               text: `${header}\n\n${formatted}${tagsList ? `\n\n---\nAll tags: ${tagsList}` : ""}`,
+            },
+          ],
+        };
+      }
+
+      if (name === "create-cloze-table") {
+        const parsed = CreateClozeTableArgumentsSchema.parse(args);
+        let { headers, rows } = parsed;
+        const { context = "", source = "" } = parsed;
+
+        // Validate that all rows have the same number of cells as headers
+        for (let i = 0; i < rows.length; i++) {
+          if (rows[i].length !== headers.length) {
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: `Row ${i + 1} has ${rows[i].length} cells but expected ${headers.length} (matching headers)`,
+                },
+              ],
+              isError: true,
+            };
+          }
+        }
+
+        const placeholderError = validatePlaceholders(headers, rows);
+        if (placeholderError) {
+          return {
+            content: [{ type: "text" as const, text: placeholderError }],
+            isError: true,
+          };
+        }
+
+        // Auto-transpose if wider than tall
+        const transposed = transposeTable(headers, rows);
+        headers = transposed.headers;
+        rows = transposed.rows;
+
+        // Reformulate __ placeholders to sound more natural
+        const reformulated = await reformulatePlaceholders(headers, rows);
+        headers = reformulated.headers;
+        rows = reformulated.rows;
+
+        // Detect orientation and collect attribute/item labels
+        const isOrientationA = headers.some((h) => h.includes("__"));
+        const isOrientationB = rows.some((r) => r[0]?.value.includes("__"));
+
+        let attributeLabels: { label: string; index: number }[] = [];
+        let itemLabels: string[] = [];
+
+        if (isOrientationA) {
+          attributeLabels = headers.map((h, i) => ({ label: h, index: i })).filter((h) => h.label.includes("__"));
+          itemLabels = rows.map((r) => r[0].value);
+        } else if (isOrientationB) {
+          attributeLabels = rows.map((r, i) => ({ label: r[0].value, index: i })).filter((r) => r.label.includes("__"));
+          itemLabels = headers.filter((h) => h !== "");
+        }
+
+        // Two-step cloze selection: if selectedAttributes is not provided, return a preview
+        let clozeCells: Set<string> | undefined;
+        let clozeHeaders: Set<number> | undefined;
+
+        if (attributeLabels.length > 0 && parsed.selectedAttributes === undefined) {
+          const attributeList = attributeLabels.map((a, i) => `  ${i}: ${a.label}`).join("\n");
+          const itemList = itemLabels.map((label) => `  - ${label}`).join("\n");
+
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: [
+                  "Before creating this cloze table, please select which attributes should have cloze deletions.",
+                  "",
+                  "**Attributes** (pass desired indices as `selectedAttributes`):",
+                  attributeList,
+                  "",
+                  "**Items** (set `clozeItems` to true/false, default true):",
+                  itemList,
+                  "",
+                  "Please present these options to the user, then call this tool again with the same `headers`, `rows`, `context`, and `source`, plus `selectedAttributes` (array of index numbers) and optionally `clozeItems` (boolean).",
+                ].join("\n"),
+              },
+            ],
+          };
+        }
+
+        if (attributeLabels.length > 0 && parsed.selectedAttributes !== undefined) {
+          const shouldClozeItems = parsed.clozeItems ?? true;
+
+          clozeCells = new Set<string>();
+          clozeHeaders = new Set<number>();
+          const selectedIndices = new Set(parsed.selectedAttributes.map((s) => attributeLabels[s].index));
+
+          if (isOrientationA) {
+            for (const colIdx of selectedIndices) {
+              for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+                const cell = rows[rowIdx][colIdx];
+                if (cell.value !== "" && !cell.value.includes("__")) {
+                  clozeCells.add(`${rowIdx},${colIdx}`);
+                }
+              }
+            }
+            if (shouldClozeItems) {
+              for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+                if (rows[rowIdx][0].value !== "") {
+                  clozeCells.add(`${rowIdx},0`);
+                }
+              }
+            }
+          } else if (isOrientationB) {
+            for (const rowIdx of selectedIndices) {
+              for (let colIdx = 1; colIdx < rows[rowIdx].length; colIdx++) {
+                const cell = rows[rowIdx][colIdx];
+                if (cell.value !== "" && !cell.value.includes("__")) {
+                  clozeCells.add(`${rowIdx},${colIdx}`);
+                }
+              }
+            }
+            if (shouldClozeItems) {
+              for (let i = 1; i < headers.length; i++) {
+                if (headers[i] !== "") {
+                  clozeHeaders.add(i);
+                }
+              }
+            }
+          }
+        }
+
+        const html = generateClozeTable(headers, rows, clozeCells, clozeHeaders);
+
+        // Look up the deck containing "ClozeTableManager" via AnkiConnect
+        const allDecks = await ankiRequest<string[]>("deckNames");
+        const clozeTableDeck = allDecks.find((d) => d.includes("ClozeTableManager"));
+        if (!clozeTableDeck) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: 'No deck containing "ClozeTableManager" found in Anki. Please create one first.',
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        const fields: Record<string, string> = {
+          "⭐Text": html,
+        };
+        if (context) fields["Context 💡"] = context;
+        if (source) fields["Source 🏴"] = source;
+
+        const noteId = await ankiRequest<number>("addNote", {
+          note: {
+            deckName: clozeTableDeck,
+            modelName: "2 Cloze",
+            fields,
+            tags: [MCP_TAG],
+          },
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Successfully created cloze table card in deck "${clozeTableDeck}" (noteId: ${noteId})\n\nGenerated HTML:\n${html}`,
             },
           ],
         };
