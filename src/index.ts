@@ -337,12 +337,12 @@ const RULES = `
 * For all fields, try to simplify text structure as much as possible -- the user wants to optimize for fast reviews, and the more 'filler' text that is contained, the worse things are.
 * Questions should NEVER ask for only a concrete numerical value, like a specific percentage.
 * An answer should NEVER be only a specific command, function name, class name.
-* Whenever displaying math equations, variables, etc. use LaTeX, surrounded by delimiters \`\\(...\\)\` / \`\\[...\\]\` for inline / displayed symbols respectively.
 `;
 
 const EXTRA_RULES = `
-If you need to style elements in fields, ALWAYS use HTML. For example:
-  * use \`<code>functionCall();</code>\` when wanting to show code or other monospaced output (like bash commands)
+If you need to style elements in fields, you can use HTML and LaTeX. For example:
+  * Whenever displaying math equations, use LaTeX, surrounded by delimiters \`\\(...\\)\` / \`\\[...\\]\` for inline / displayed symbols respectively.
+  * use \`<code>functionCall();</code>\` when wanting to show code, software-related variable names, bash commands or other monospaced output
   * use \`<i>the i element</i>\` when wanting to use italics
   * use HTML lists (\`<ul><li>item</li></ul>\`) when listing multiple items, especially if they are the answer to a question`;
 
