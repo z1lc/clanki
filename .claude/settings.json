@@ -1,0 +1,12 @@
+{
+  "hooks": {},
+  "statusLine": {
+    "type": "command",
+    "command": ".claude/statusline.sh"
+  },
+  "alwaysThinkingEnabled": true,
+  "effortLevel": "high",
+  "enabledPlugins": {
+    "frontend-design@claude-plugins-official": true
+  }
+}

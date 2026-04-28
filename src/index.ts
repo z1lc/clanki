@@ -10,6 +10,7 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { showAttributePicker, startPickerServer, updatePickerData } from "./attribute-picker.js";
 
 // Constants
 const _ANKI_CONNECT_URL = "http://localhost:8765";
@@ -931,7 +932,7 @@ async function main() {
                 type: "array",
                 items: { type: "number" },
                 description:
-                  "Indices of attributes to cloze (from the preview response). Omit on first call to get a preview.",
+                  "Indices of attributes to cloze. If omitted, a browser-based picker opens for the user to select interactively.",
               },
               clozeItems: {
                 type: "boolean",
@@ -1461,12 +1462,7 @@ async function main() {
         headers = transposed.headers;
         rows = transposed.rows;
 
-        // Reformulate __ placeholders to sound more natural
-        const reformulated = await reformulatePlaceholders(headers, rows);
-        headers = reformulated.headers;
-        rows = reformulated.rows;
-
-        // Detect orientation and collect attribute/item labels
+        // Detect orientation before reformulation (__ positions don't change)
         const isOrientationA = headers.some((h) => h.includes("__"));
         const isOrientationB = rows.some((r) => r[0]?.value.includes("__"));
 
@@ -1481,32 +1477,39 @@ async function main() {
           itemLabels = headers.filter((h) => h !== "");
         }
 
-        // Two-step cloze selection: if selectedAttributes is not provided, return a preview
         let clozeCells: Set<string> | undefined;
         let clozeHeaders: Set<number> | undefined;
 
         if (attributeLabels.length > 0 && parsed.selectedAttributes === undefined) {
-          const attributeList = attributeLabels.map((a, i) => `  ${i}: ${a.label}`).join("\n");
-          const itemList = itemLabels.map((label) => `  - ${label}`).join("\n");
+          // Open picker immediately with original headers, reformulate in parallel
+          const pickerPromise = showAttributePicker({
+            headers,
+            rows,
+            attributeLabels,
+            itemLabels,
+            isOrientationA,
+          });
 
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: [
-                  "Before creating this cloze table, please select which attributes should have cloze deletions.",
-                  "",
-                  "**Attributes** (pass desired indices as `selectedAttributes`):",
-                  attributeList,
-                  "",
-                  "**Items** (set `clozeItems` to true/false, default true):",
-                  itemList,
-                  "",
-                  "Please present these options to the user, then call this tool again with the same `headers`, `rows`, `context`, and `source`, plus `selectedAttributes` (array of index numbers) and optionally `clozeItems` (boolean).",
-                ].join("\n"),
-              },
-            ],
-          };
+          const reformulated = await reformulatePlaceholders(headers, rows);
+          headers = reformulated.headers;
+          rows = reformulated.rows;
+          if (isOrientationA) {
+            attributeLabels = headers.map((h, i) => ({ label: h, index: i })).filter((h) => h.label.includes("__"));
+          } else if (isOrientationB) {
+            attributeLabels = rows
+              .map((r, i) => ({ label: r[0].value, index: i }))
+              .filter((r) => r.label.includes("__"));
+          }
+          updatePickerData({ headers, rows, attributeLabels, itemLabels, isOrientationA });
+
+          const pickerResult = await pickerPromise;
+          parsed.selectedAttributes = pickerResult.selectedAttributes;
+          parsed.clozeItems = pickerResult.clozeItems;
+        } else {
+          // No picker needed — still reformulate for card creation
+          const reformulated = await reformulatePlaceholders(headers, rows);
+          headers = reformulated.headers;
+          rows = reformulated.rows;
         }
 
         if (attributeLabels.length > 0 && parsed.selectedAttributes !== undefined) {
@@ -1643,7 +1646,10 @@ async function main() {
     throw new Error(`Invalid resource URI: ${uri}`);
   });
 
-  // Start the server
+  // Start the attribute picker HTTP server (runs persistently for instant browser opens)
+  await startPickerServer();
+
+  // Start the MCP server
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Anki MCP Server running on stdio");
