@@ -238,6 +238,7 @@ async function ankiRequest<T>(action: string, params: Record<string, any> = {}, 
         const data = JSON.stringify({
           action,
           version: 6,
+          key: ANKI_CONNECT_API_KEY,
           params,
         });
 
@@ -326,9 +327,12 @@ async function ankiRequest<T>(action: string, params: Record<string, any> = {}, 
   throw new Error(`Failed after ${retries} attempts`);
 }
 
-// Gemini API helpers
+// API keys
 const GEMINI_API_KEY = fs
   .readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), "..", ".gemini-api-key"), "utf-8")
+  .trim();
+const ANKI_CONNECT_API_KEY = fs
+  .readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), "..", ".anki-connect-api-key"), "utf-8")
   .trim();
 
 const RULES = `
