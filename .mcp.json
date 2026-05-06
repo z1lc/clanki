@@ -1,8 +1,12 @@
 {
   "mcpServers": {
     "chrome-devtools": {
-      "command": "npx",
-      "args": ["chrome-devtools-mcp@latest", "--wsEndpoint", "ws://host.docker.internal:9222/devtools/browser/9cc68d2a-61fd-4c5e-8c98-76ca756ec71a"]
+      "args": [
+        "chrome-devtools-mcp@latest",
+        "--wsEndpoint",
+        "ws://host.docker.internal:9222/devtools/browser/e0ecdd21-69b0-4634-b5e1-cb0117282e1f"
+      ],
+      "command": "npx"
     }
   }
 }

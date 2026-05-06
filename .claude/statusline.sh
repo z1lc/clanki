@@ -4,9 +4,7 @@ input=$(cat)
 # Model name from display_name, stripping any parenthetical like "(1M context)"
 model_label=$(echo "$input" | jq -r '.model.display_name // "Unknown"' | sed -E 's/ *\([^)]*\)//')
 
-# Effort level from settings.json
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-effort=$(jq -r '.effortLevel // "default"' "$SCRIPT_DIR/settings.json" 2>/dev/null)
+effort=$(echo "$input" | jq -r '.effort.level // "default"')
 
 # Context window
 size=$(echo "$input" | jq -r '.context_window.context_window_size // 0')
