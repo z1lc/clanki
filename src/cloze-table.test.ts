@@ -221,4 +221,33 @@ describe("generateClozeTable", () => {
     expect(html).toContain("<td>SQLite</td>");
     expect(html).toContain("<td>OLTP</td>");
   });
+
+  it("applies itemHint to body item-label clozes (orientation A) but not attribute clozes", () => {
+    const headers = ["", "__ workload:"];
+    const rows = [
+      [{ value: "SQLite" }, { value: "OLTP" }],
+      [{ value: "DuckDB" }, { value: "OLAP" }],
+    ];
+    const clozeCells = new Set(["0,0", "0,1", "1,0", "1,1"]);
+    const itemClozeCells = new Set(["0,0", "1,0"]);
+    const itemHint = "<ul><li>DuckDB</li><li>SQLite</li></ul>";
+    const html = generateClozeTable(headers, rows, clozeCells, new Set(), itemHint, itemClozeCells);
+    expect(html).toContain(`{{c1::SQLite::${itemHint}}}`);
+    expect(html).toContain("{{c2::OLTP}}");
+    expect(html).toContain(`{{c3::DuckDB::${itemHint}}}`);
+    expect(html).toContain("{{c4::OLAP}}");
+  });
+
+  it("applies itemHint to clozed headers (orientation B)", () => {
+    const headers = ["", "SQLite", "DuckDB"];
+    const rows = [[{ value: "__ workload:" }, { value: "OLTP" }, { value: "OLAP" }]];
+    const clozeCells = new Set(["0,1", "0,2"]);
+    const clozeHeaders = new Set([1, 2]);
+    const itemHint = "<ul><li>DuckDB</li><li>SQLite</li></ul>";
+    const html = generateClozeTable(headers, rows, clozeCells, clozeHeaders, itemHint);
+    expect(html).toContain(`<th>{{c1::SQLite::${itemHint}}}</th>`);
+    expect(html).toContain(`<th>{{c2::DuckDB::${itemHint}}}</th>`);
+    expect(html).toContain("{{c3::OLTP}}");
+    expect(html).toContain("{{c4::OLAP}}");
+  });
 });

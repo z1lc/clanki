@@ -50,8 +50,6 @@ const CreateClozeTableArgumentsSchema = z.object({
   rows: z.array(z.array(ClozeTableCellSchema)),
   context: z.string().optional(),
   source: z.string().optional(),
-  selectedAttributes: z.array(z.number()).optional(),
-  clozeItems: z.boolean().optional(),
 });
 
 const UpdateCardArgumentsSchema = z.object({
@@ -137,6 +135,14 @@ const UpdateInterviewCardArgumentsSchema = z.object({
   source: z.string().optional(),
 });
 
+const CreateAbbreviationDefinitionCardArgumentsSchema = z.object({
+  abbreviation: z.string(),
+  boldedExpandedAbbreviation: z.string(),
+  description: z.string(),
+  context: z.string().optional(),
+  extra: z.string().optional(),
+});
+
 const SearchCollectionArgumentsSchema = z.object({
   query: z.string(),
   offset: z.number().optional().default(0),
@@ -185,6 +191,8 @@ export function generateClozeTable(
   rows: ClozeTableCell[][],
   clozeCells?: Set<string>,
   clozeHeaders?: Set<number>,
+  itemHint?: string,
+  itemClozeCells?: Set<string>,
 ): string {
   let clozeNum = 1;
   const lines: string[] = [];
@@ -196,7 +204,9 @@ export function generateClozeTable(
     const shouldCloze =
       clozeCells !== undefined ? (clozeHeaders?.has(i) ?? false) : header !== "" && !header.includes("__");
     if (shouldCloze) {
-      lines.push(`      <th>{{c${clozeNum}::${header}}}</th>`);
+      const cloze =
+        itemHint && clozeHeaders?.has(i) ? `{{c${clozeNum}::${header}::${itemHint}}}` : `{{c${clozeNum}::${header}}}`;
+      lines.push(`      <th>${cloze}</th>`);
       clozeNum++;
     } else {
       lines.push(`      <th>${header}</th>`);
@@ -214,7 +224,11 @@ export function generateClozeTable(
           ? clozeCells.has(`${rowIdx},${colIdx}`)
           : cell.value !== "" && !cell.value.includes("__");
       if (shouldCloze) {
-        const cloze = cell.hint ? `{{c${clozeNum}::${cell.value}::${cell.hint}}}` : `{{c${clozeNum}::${cell.value}}}`;
+        const isItemCloze = itemHint !== undefined && (itemClozeCells?.has(`${rowIdx},${colIdx}`) ?? false);
+        const effectiveHint = isItemCloze ? itemHint : cell.hint;
+        const cloze = effectiveHint
+          ? `{{c${clozeNum}::${cell.value}::${effectiveHint}}}`
+          : `{{c${clozeNum}::${cell.value}}}`;
         lines.push(`      <td>${cloze}</td>`);
         clozeNum++;
       } else {
@@ -600,9 +614,43 @@ async function main() {
             required: ["noteId"],
           },
         },
+        {
+          name: "create-abbreviation-definition-card",
+          description:
+            "Create a new abbreviation/acronym card. Uses the 1 Basic note type with the Abbrev Short field set; reverse card is always enabled.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              abbreviation: {
+                type: "string",
+                description: "The short form, e.g. 'DASH'",
+              },
+              boldedExpandedAbbreviation: {
+                type: "string",
+                description:
+                  "The expanded form with each acronym letter wrapped in <b>...</b>, e.g. '<b>D</b>ietary <b>A</b>pproaches to <b>S</b>top <b>H</b>ypertension'",
+              },
+              description: {
+                type: "string",
+                description:
+                  "Definition / what the abbreviation means, e.g. 'diet that has been shown to decrease blood pressure'",
+              },
+              context: {
+                type: "string",
+                description: "Domain or topical context, e.g. 'health', 'LLMs', '<i>Database Internals</i>'",
+              },
+              extra: {
+                type: "string",
+                description:
+                  "Additional detail shown on the card back, e.g. 'focuses on fruits, vegetables, whole grains'",
+              },
+            },
+            required: ["abbreviation", "boldedExpandedAbbreviation", "description"],
+          },
+        },
         // Cloze card tools disabled — handlers remain below for re-enablement
         {
-          name: "create-programming-card",
+          name: "create-programming-language-function-card",
           description: "Create a new programming language function card.",
           inputSchema: {
             type: "object",
@@ -671,7 +719,7 @@ async function main() {
           },
         },
         {
-          name: "update-programming-card",
+          name: "update-programming-language-function-card",
           description: "Update an existing programming language function card",
           inputSchema: {
             type: "object",
@@ -741,7 +789,7 @@ async function main() {
           },
         },
         {
-          name: "create-interview-card",
+          name: "create-leetcode-question-card",
           description:
             "Create a new interview question card for coding/algorithm problems. Keep questions simple; avoid lists, sets, and enumerations; ask only a single question per card.",
           inputSchema: {
@@ -811,7 +859,7 @@ async function main() {
           },
         },
         {
-          name: "update-interview-card",
+          name: "update-leetcode-question-card",
           description: "Update an existing interview question card",
           inputSchema: {
             type: "object",
@@ -898,7 +946,7 @@ async function main() {
         {
           name: "create-cloze-table",
           description:
-            'Create a cloze deletion card with an HTML table. ALL body cells are wrapped in cloze deletions with auto-incrementing numbers. Each non-empty header MUST contain "__" (double underscore) as a placeholder — a JavaScript function on the card replaces "__" with the row\'s first-column value to form a question (e.g. "Who is the creator of __?" becomes "Who is the creator of UNIX?"). The first header is an empty string. CRITICAL ORIENTATION RULE: The items being compared (e.g. UNIX vs Linux, SQLite vs DuckDB) MUST be the ROW LABELS (first column of each row). The attributes/properties being compared across those items (e.g. creator, licensing, workload, storage layout) MUST be the HEADERS with "__" placeholders. Think of it as: rows = things, columns = attributes of those things. Example: comparing SQLite vs DuckDB → headers are ["", "Target workload of __:", "__ storage layout:", ...] and each row starts with "SQLite" or "DuckDB". IMPORTANT: Before calling this tool, you MUST (1) discuss with the user what headers and rows the table should contain, (2) show the user a preview of the table, and (3) get explicit confirmation before invoking this tool.',
+            'Create a cloze deletion card with an HTML table. ALL body cells are wrapped in cloze deletions with auto-incrementing numbers. Each non-empty header MUST contain "__" (double underscore) as a placeholder — a JavaScript function on the card replaces "__" with the row\'s first-column value to form a question (e.g. "Who is the creator of __?" becomes "Who is the creator of UNIX?"). The first header is an empty string. CRITICAL ORIENTATION RULE: The items being compared (e.g. UNIX vs Linux, SQLite vs DuckDB) MUST be the ROW LABELS (first column of each row). The attributes/properties being compared across those items (e.g. creator, licensing, workload, storage layout) MUST be the HEADERS with "__" placeholders. Think of it as: rows = things, columns = attributes of those things. Example: comparing SQLite vs DuckDB → headers are ["", "Target workload of __:", "__ storage layout:", ...] and each row starts with "SQLite" or "DuckDB".',
           inputSchema: {
             type: "object",
             properties: {
@@ -931,16 +979,6 @@ async function main() {
               source: {
                 type: "string",
                 description: "Source reference for the card content",
-              },
-              selectedAttributes: {
-                type: "array",
-                items: { type: "number" },
-                description:
-                  "Indices of attributes to cloze. If omitted, a browser-based picker opens for the user to select interactively.",
-              },
-              clozeItems: {
-                type: "boolean",
-                description: "Whether to cloze the item labels. Defaults to true.",
               },
             },
             required: ["headers", "rows"],
@@ -1035,6 +1073,43 @@ async function main() {
         };
       }
 
+      if (name === "create-abbreviation-definition-card") {
+        const {
+          abbreviation,
+          boldedExpandedAbbreviation,
+          description,
+          context = "",
+          extra = "",
+        } = CreateAbbreviationDefinitionCardArgumentsSchema.parse(args);
+
+        const fields: Record<string, string> = {
+          "🔹Abbrev Short 🆎": abbreviation,
+          Front: boldedExpandedAbbreviation,
+          Back: description,
+          "🔹Add Reverse 🔀": "y",
+        };
+        if (context) fields["Context 💡"] = context;
+        if (extra) fields["Extra ➕"] = extra;
+
+        const noteId = await ankiRequest<number>("addNote", {
+          note: {
+            deckName: DEFAULT_DECK,
+            modelName: "1 Basic",
+            fields,
+            tags: [MCP_TAG],
+          },
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Successfully created abbreviation card for "${abbreviation}" in deck "${DEFAULT_DECK}" (noteId: ${noteId})`,
+            },
+          ],
+        };
+      }
+
       if (name === "create-cloze-card") {
         const { text, backExtra = "", context = "", source = "" } = CreateClozeCardArgumentsSchema.parse(args);
 
@@ -1121,7 +1196,7 @@ async function main() {
         };
       }
 
-      if (name === "create-programming-card") {
+      if (name === "create-programming-language-function-card") {
         const {
           functionName,
           programmingLanguage,
@@ -1174,7 +1249,7 @@ async function main() {
         };
       }
 
-      if (name === "update-programming-card") {
+      if (name === "update-programming-language-function-card") {
         const {
           noteId,
           functionName,
@@ -1246,7 +1321,7 @@ async function main() {
         };
       }
 
-      if (name === "create-interview-card") {
+      if (name === "create-leetcode-question-card") {
         const {
           title,
           question,
@@ -1298,7 +1373,7 @@ async function main() {
         };
       }
 
-      if (name === "update-interview-card") {
+      if (name === "update-leetcode-question-card") {
         const {
           noteId,
           title,
@@ -1483,8 +1558,12 @@ async function main() {
 
         let clozeCells: Set<string> | undefined;
         let clozeHeaders: Set<number> | undefined;
+        let itemClozeCells: Set<string> | undefined;
+        let selectedAttributes: number[] | undefined;
+        let clozeItems: boolean | undefined;
+        let clozeItemHints: boolean | undefined;
 
-        if (attributeLabels.length > 0 && parsed.selectedAttributes === undefined) {
+        if (attributeLabels.length > 0) {
           // Open picker immediately with original headers, reformulate in parallel
           const pickerPromise = showAttributePicker({
             headers,
@@ -1507,21 +1586,23 @@ async function main() {
           updatePickerData({ headers, rows, attributeLabels, itemLabels, isOrientationA });
 
           const pickerResult = await pickerPromise;
-          parsed.selectedAttributes = pickerResult.selectedAttributes;
-          parsed.clozeItems = pickerResult.clozeItems;
+          selectedAttributes = pickerResult.selectedAttributes;
+          clozeItems = pickerResult.clozeItems;
+          clozeItemHints = pickerResult.clozeItemHints;
         } else {
-          // No picker needed — still reformulate for card creation
+          // No attributes to pick — still reformulate for card creation
           const reformulated = await reformulatePlaceholders(headers, rows);
           headers = reformulated.headers;
           rows = reformulated.rows;
         }
 
-        if (attributeLabels.length > 0 && parsed.selectedAttributes !== undefined) {
-          const shouldClozeItems = parsed.clozeItems ?? true;
+        if (attributeLabels.length > 0 && selectedAttributes !== undefined) {
+          const shouldClozeItems = clozeItems ?? true;
 
           clozeCells = new Set<string>();
           clozeHeaders = new Set<number>();
-          const selectedIndices = new Set(parsed.selectedAttributes.map((s) => attributeLabels[s].index));
+          itemClozeCells = new Set<string>();
+          const selectedIndices = new Set(selectedAttributes.map((s) => attributeLabels[s].index));
 
           if (isOrientationA) {
             for (const colIdx of selectedIndices) {
@@ -1536,6 +1617,7 @@ async function main() {
               for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
                 if (rows[rowIdx][0].value !== "") {
                   clozeCells.add(`${rowIdx},0`);
+                  itemClozeCells.add(`${rowIdx},0`);
                 }
               }
             }
@@ -1558,7 +1640,19 @@ async function main() {
           }
         }
 
-        const html = generateClozeTable(headers, rows, clozeCells, clozeHeaders);
+        let itemHint: string | undefined;
+        const showItemHints = clozeItemHints ?? true;
+        const shouldClozeItemsForHint = clozeItems ?? true;
+        if (shouldClozeItemsForHint && showItemHints && itemLabels.length > 0) {
+          const sorted = [...new Set(itemLabels.filter((l) => l !== ""))].sort((a, b) =>
+            a.localeCompare(b, undefined, { sensitivity: "base" }),
+          );
+          if (sorted.length > 0) {
+            itemHint = `<ul><li>${sorted.join("</li><li>")}</li></ul>`;
+          }
+        }
+
+        const html = generateClozeTable(headers, rows, clozeCells, clozeHeaders, itemHint, itemClozeCells);
 
         // Look up the deck containing "ClozeTableManager" via AnkiConnect
         const allDecks = await ankiRequest<string[]>("deckNames");

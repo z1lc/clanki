@@ -11,7 +11,7 @@ export interface PickerData {
 
 interface PendingPicker {
   html: string;
-  resolve: (result: { selectedAttributes: number[]; clozeItems: boolean }) => void;
+  resolve: (result: { selectedAttributes: number[]; clozeItems: boolean; clozeItemHints: boolean }) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
 }
@@ -129,6 +129,9 @@ function generatePickerHtml(data: PickerData): string {
         ${attrCheckboxes}
         <div class="divider"></div>
         <label class="checkbox-row"><input type="checkbox" id="clozeItems" checked /><span>Cloze item labels (${itemsLabel})</span></label>
+        <div id="itemHintsRow">
+          <label class="checkbox-row"><input type="checkbox" id="clozeItemHints" checked /><span>Show item label hints</span></label>
+        </div>
       </div>
       <button type="submit">Create Card</button>
     </form>
@@ -137,8 +140,14 @@ function generatePickerHtml(data: PickerData): string {
     const isOrientationA = ${isOrientationA};
     const attrCheckboxes = document.querySelectorAll('input[name="attr"]');
     const clozeItemsCheckbox = document.getElementById('clozeItems');
+    const clozeItemHintsCheckbox = document.getElementById('clozeItemHints');
+    const itemHintsRow = document.getElementById('itemHintsRow');
     const table = document.getElementById('preview');
     let reformulationDone = false;
+
+    function updateItemHintsVisibility() {
+      itemHintsRow.style.display = clozeItemsCheckbox.checked ? '' : 'none';
+    }
 
     function updateHighlights() {
       table.querySelectorAll('.highlighted, .item-highlighted').forEach(function(el) { el.classList.remove('highlighted', 'item-highlighted'); });
@@ -165,7 +174,9 @@ function generatePickerHtml(data: PickerData): string {
 
     attrCheckboxes.forEach(function(cb) { cb.addEventListener('change', updateHighlights); });
     clozeItemsCheckbox.addEventListener('change', updateHighlights);
+    clozeItemsCheckbox.addEventListener('change', updateItemHintsVisibility);
     updateHighlights();
+    updateItemHintsVisibility();
 
     const pollInterval = setInterval(async function() {
       try {
@@ -177,14 +188,14 @@ function generatePickerHtml(data: PickerData): string {
         const el = document.getElementById('reformulating');
         if (el) el.remove();
         const headerRow = table.querySelector('thead tr');
-        data.headers.forEach(function(h, i) { if (headerRow.children[i]) headerRow.children[i].textContent = h; });
+        data.headers.forEach(function(h, i) { if (headerRow.children[i]) headerRow.children[i].innerHTML = h; });
         const bodyRows = table.querySelectorAll('tbody tr');
         data.rows.forEach(function(row, ri) {
           if (!bodyRows[ri]) return;
-          row.forEach(function(cell, ci) { if (bodyRows[ri].children[ci]) bodyRows[ri].children[ci].textContent = cell.value; });
+          row.forEach(function(cell, ci) { if (bodyRows[ri].children[ci]) bodyRows[ri].children[ci].innerHTML = cell.value; });
         });
         const labels = document.querySelectorAll('.attr-label');
-        data.attributeLabels.forEach(function(a, i) { if (labels[i]) labels[i].textContent = a.label; });
+        data.attributeLabels.forEach(function(a, i) { if (labels[i]) labels[i].innerHTML = a.label; });
         updateHighlights();
       } catch(e) {}
     }, 500);
@@ -193,10 +204,11 @@ function generatePickerHtml(data: PickerData): string {
       e.preventDefault();
       const selected = Array.from(attrCheckboxes).filter(function(cb) { return cb.checked; }).map(function(cb) { return parseInt(cb.value); });
       const clozeItems = clozeItemsCheckbox.checked;
+      const clozeItemHints = clozeItems && clozeItemHintsCheckbox.checked;
       const res = await fetch('/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selectedAttributes: selected, clozeItems }),
+        body: JSON.stringify({ selectedAttributes: selected, clozeItems, clozeItemHints }),
       });
       if (res.ok) {
         const msg = reformulationDone
@@ -258,7 +270,11 @@ export function startPickerServer(): Promise<string> {
             return;
           }
           try {
-            const parsed = JSON.parse(body) as { selectedAttributes: number[]; clozeItems: boolean };
+            const parsed = JSON.parse(body) as {
+              selectedAttributes: number[];
+              clozeItems: boolean;
+              clozeItemHints: boolean;
+            };
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ ok: true }));
             clearTimeout(pendingPicker.timeout);
@@ -288,7 +304,9 @@ export function startPickerServer(): Promise<string> {
   });
 }
 
-export function showAttributePicker(data: PickerData): Promise<{ selectedAttributes: number[]; clozeItems: boolean }> {
+export function showAttributePicker(
+  data: PickerData,
+): Promise<{ selectedAttributes: number[]; clozeItems: boolean; clozeItemHints: boolean }> {
   return new Promise((resolve, reject) => {
     const html = generatePickerHtml(data);
     updatedData = null;
