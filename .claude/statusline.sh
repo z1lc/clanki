@@ -23,33 +23,68 @@ else
   ctx_str="${ctx_int}%"
 fi
 
-# Rate limits
-rate_pct=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
-if [ -n "$rate_pct" ]; then
-  rate_int=$(printf '%.0f' "$rate_pct")
-  if [ "$rate_int" -ge 80 ]; then
-    rate_str="${bold}${rate_int}%${reset}"
+format_pct() {
+  local pct_int=$1
+  if [ "$pct_int" -ge 80 ]; then
+    printf '%s%s%%%s' "$bold" "$pct_int" "$reset"
   else
-    rate_str="${rate_int}%"
+    printf '%s%%' "$pct_int"
   fi
-  resets_at=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
+}
+
+format_reset() {
+  local resets_at=$1
+  local now
+  now=$(date +%s)
+  local diff=$((resets_at - now))
+  if [ "$diff" -lt 0 ]; then diff=0; fi
+  local days=$((diff / 86400))
+  local hrs=$(((diff % 86400) / 3600))
+  local mins=$(((diff % 3600) / 60))
+  if [ "$days" -gt 0 ]; then
+    printf '%dd %dh' "$days" "$hrs"
+  elif [ "$hrs" -gt 0 ]; then
+    printf '%dh %dm' "$hrs" "$mins"
+  else
+    printf '%dm' "$mins"
+  fi
+}
+
+format_window() {
+  local pct=$1
+  local resets_at=$2
+  if [ -z "$pct" ]; then
+    return
+  fi
+  local pct_int
+  pct_int=$(printf '%.0f' "$pct")
+  local pct_str
+  pct_str=$(format_pct "$pct_int")
   if [ -n "$resets_at" ]; then
-    now=$(date +%s)
-    diff=$((resets_at - now))
-    if [ "$diff" -lt 0 ]; then diff=0; fi
-    hrs=$((diff / 3600))
-    mins=$(((diff % 3600) / 60))
-    if [ "$hrs" -gt 0 ]; then
-      reset_fmt="${hrs}h${mins}m"
-    else
-      reset_fmt="${mins}m"
-    fi
-    printf '%s (%s) · %s of %s context · %s of 5h limit (resets in %s)' \
-      "$model_label" "$effort" "$ctx_str" "$size_fmt" "$rate_str" "$reset_fmt"
+    local reset_fmt
+    reset_fmt=$(format_reset "$resets_at")
+    printf '%s (%s)' "$pct_str" "$reset_fmt"
   else
-    printf '%s (%s) · %s of %s context · %s of 5h limit' \
-      "$model_label" "$effort" "$ctx_str" "$size_fmt" "$rate_str"
+    printf '%s' "$pct_str"
   fi
+}
+
+rate_pct_5h=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
+resets_5h=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty')
+rate_pct_7d=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
+resets_7d=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty')
+
+base="$model_label ($effort) · $ctx_str of $size_fmt"
+
+five_h_str=$(format_window "$rate_pct_5h" "$resets_5h")
+seven_d_str=$(format_window "$rate_pct_7d" "$resets_7d")
+
+if [ -n "$five_h_str" ] && [ -n "$seven_d_str" ]; then
+  printf '%s · %s / %s' "$base" "$five_h_str" "$seven_d_str"
+elif [ -n "$five_h_str" ]; then
+  printf '%s · %s' "$base" "$five_h_str"
+elif [ -n "$seven_d_str" ]; then
+  printf '%s · %s' "$base" "$seven_d_str"
 else
-  printf '%s (%s) · %s of %s context' "$model_label" "$effort" "$ctx_str" "$size_fmt"
+  printf '%s' "$base"
 fi

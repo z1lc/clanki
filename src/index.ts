@@ -1016,7 +1016,7 @@ async function main() {
           },
         });
 
-        let responseText = `Successfully created new card in deck "${DEFAULT_DECK}" (noteId: ${noteId})`;
+        let responseText = `Successfully created new basic card" (noteId: ${noteId})`;
         if (wasFixed) {
           responseText += `\n\nNote: Card was auto-corrected: ${validated.details}\nFront: ${validated.front}\nBack: ${validated.back}\nExtra: ${validated.extra}`;
         }
@@ -1104,7 +1104,7 @@ async function main() {
           content: [
             {
               type: "text",
-              text: `Successfully created abbreviation card for "${abbreviation}" in deck "${DEFAULT_DECK}" (noteId: ${noteId})`,
+              text: `Successfully created new abbreviation card (noteId: ${noteId})`,
             },
           ],
         };
@@ -1138,7 +1138,7 @@ async function main() {
           content: [
             {
               type: "text",
-              text: `Successfully created new cloze card in deck "${DEFAULT_DECK}" (noteId: ${noteId})`,
+              text: `Successfully created new cloze card (noteId: ${noteId})`,
             },
           ],
         };
@@ -1243,7 +1243,7 @@ async function main() {
           content: [
             {
               type: "text",
-              text: `Successfully created new programming card for "${functionName}" in deck "${DEFAULT_DECK}" (noteId: ${noteId})`,
+              text: `Successfully created new programming card for "${functionName}" (noteId: ${noteId})`,
             },
           ],
         };
@@ -1367,7 +1367,7 @@ async function main() {
           content: [
             {
               type: "text",
-              text: `Successfully created new interview card "${title}" in deck "${DEFAULT_DECK}" (noteId: ${noteId})`,
+              text: `Successfully created new interview card "${title}" (noteId: ${noteId})`,
             },
           ],
         };
@@ -1688,7 +1688,7 @@ async function main() {
           content: [
             {
               type: "text",
-              text: `Successfully created cloze table card in deck "${clozeTableDeck}" (noteId: ${noteId})\n\nGenerated HTML:\n${html}`,
+              text: `Successfully created cloze table card (noteId: ${noteId})\n\nGenerated HTML:\n${html}`,
             },
           ],
         };
