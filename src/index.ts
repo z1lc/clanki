@@ -17,6 +17,9 @@ const _ANKI_CONNECT_URL = "http://localhost:8765";
 const SEARCH_PAGE_SIZE = 100;
 const DEFAULT_DECK = "z::1 \u221E (manual catch-all)::0 interview prep::0 mcp";
 const MCP_TAG = "mcp_generated";
+const SYNC_DEBOUNCE_MS = 5 * 60 * 1000; // auto-sync 5 min after the last collection change
+// Mutating actions that (re)arm the sync timer; excludes "sync" itself to avoid a loop.
+const SYNC_TRIGGER_ACTIONS = new Set(["addNote", "updateNoteFields"]);
 
 // Type definitions for Anki responses
 interface AnkiResponse<T> {
@@ -326,6 +329,7 @@ async function ankiRequest<T>(action: string, params: Record<string, any> = {}, 
         req.end();
       });
 
+      if (SYNC_TRIGGER_ACTIONS.has(action)) scheduleSync(); // success → (re)arm debounced sync
       return result;
     } catch (error) {
       if ((error as any).ankiError || attempt === retries) {
@@ -339,6 +343,20 @@ async function ankiRequest<T>(action: string, params: Record<string, any> = {}, 
   }
 
   throw new Error(`Failed after ${retries} attempts`);
+}
+
+// Trailing-debounced AnkiWeb sync: each mutating request restarts the 5-min timer.
+let syncTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleSync(): void {
+  if (syncTimer) clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => {
+    syncTimer = null;
+    console.error("Auto-sync: debounce elapsed, syncing collection to AnkiWeb...");
+    ankiRequest("sync")
+      .then(() => console.error("Auto-sync: completed"))
+      .catch((err) => console.error("Auto-sync: failed (will retry on next change)", err));
+  }, SYNC_DEBOUNCE_MS);
 }
 
 // API keys
@@ -1712,7 +1730,16 @@ async function main() {
           isError: true,
         };
       }
-      throw error;
+      // Surface guard/validation messages to the caller as a tool error
+      return {
+        content: [
+          {
+            type: "text",
+            text: (error as Error).message,
+          },
+        ],
+        isError: true,
+      };
     }
   });
 
