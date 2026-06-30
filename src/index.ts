@@ -549,6 +549,78 @@ export function prepareSearchQuery(query: string): string {
   return tokens.join(" ");
 }
 
+const ABBREVIATION_STOP_WORDS = new Set([
+  "the",
+  "a",
+  "an",
+  "and",
+  "or",
+  "of",
+  "to",
+  "in",
+  "on",
+  "at",
+  "by",
+  "for",
+  "with",
+  "from",
+  "into",
+  "as",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "that",
+  "this",
+  "it",
+  "its",
+]);
+
+// <br> and block-closing tags become spaces; everything else is stripped to "".
+const BLOCK_TAG_PATTERN = /<br\s*\/?>|<\/(?:p|div|li|tr|td|th|ul|ol|table|h[1-6]|blockquote)>/gi;
+
+export function stripHtml(html: string): string {
+  return html
+    .replace(BLOCK_TAG_PATTERN, " ")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&amp;/gi, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function trimPunctuation(token: string): string {
+  return token.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+}
+
+// Words from the expansion (Front) that also appear, whole-word, in the definition (Back).
+export function findAbbreviationHints(front: string, back: string): string[] {
+  const backWords = new Set(
+    stripHtml(back)
+      .split(/\s+/)
+      .map((t) => trimPunctuation(t).toLowerCase())
+      .filter(Boolean),
+  );
+
+  const hints: string[] = [];
+  const seen = new Set<string>();
+  for (const rawToken of stripHtml(front).split(/\s+/)) {
+    const trimmed = trimPunctuation(rawToken);
+    const word = trimmed.toLowerCase();
+    if (word.length <= 2 || ABBREVIATION_STOP_WORDS.has(word) || seen.has(word)) continue;
+    if (backWords.has(word)) {
+      seen.add(word);
+      hints.push(trimmed);
+    }
+  }
+  return hints;
+}
+
 async function main() {
   // Create server instance
   const server = new Server(
@@ -1099,6 +1171,19 @@ async function main() {
           context = "",
           extra = "",
         } = CreateAbbreviationDefinitionCardArgumentsSchema.parse(args);
+
+        const hints = findAbbreviationHints(boldedExpandedAbbreviation, description);
+        if (hints.length > 0) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Abbreviation rejected: the definition (Back) reuses word(s) from the expansion (Front): ${hints.join(", ")}. These give away the answer — rewrite the definition without them.`,
+              },
+            ],
+            isError: true,
+          };
+        }
 
         const fields: Record<string, string> = {
           "🔹Abbrev Short 🆎": abbreviation,
