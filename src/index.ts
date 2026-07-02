@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as http from "node:http";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -420,6 +421,88 @@ async function geminiRequest(model: string, prompt: string): Promise<string> {
   return data.candidates[0].content.parts[0].text;
 }
 
+function findFirstCompleteJsonValue(raw: string): string | null {
+  const objectStart = raw.indexOf("{");
+  const arrayStart = raw.indexOf("[");
+  const starts = [objectStart, arrayStart].filter((index) => index !== -1);
+  const start = starts.length > 0 ? Math.min(...starts) : -1;
+  if (start === -1) return null;
+
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < raw.length; i++) {
+    const char = raw[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{" || char === "[") {
+      stack.push(char);
+      continue;
+    }
+
+    if (char === "}" || char === "]") {
+      const opener = stack.pop();
+      if ((char === "}" && opener !== "{") || (char === "]" && opener !== "[")) {
+        return null;
+      }
+      if (stack.length === 0) {
+        return raw.slice(start, i + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
+export function parseModelJson<T>(raw: string, label: string, schema: z.ZodType<T>): T {
+  const trimmed = raw.trim();
+
+  try {
+    return schema.parse(JSON.parse(trimmed));
+  } catch (strictError) {
+    const jsonValue = findFirstCompleteJsonValue(trimmed);
+    if (jsonValue === null || jsonValue === trimmed) {
+      throw strictError;
+    }
+
+    try {
+      return schema.parse(JSON.parse(jsonValue));
+    } catch (extractedError) {
+      const snippet = trimmed.length > 500 ? `${trimmed.slice(0, 500)}...` : trimmed;
+      throw new Error(`Failed to parse ${label} JSON from model response: ${snippet}`, { cause: extractedError });
+    }
+  }
+}
+
+const ValidationResultSchema = z.object({
+  result: z.boolean(),
+  details: z.string().optional().default(""),
+});
+
+const FixedCardSchema = z.object({
+  front: z.string(),
+  back: z.string(),
+  extra: z.string().optional(),
+});
+
+const ReformulatedPlaceholdersSchema = z.array(z.string());
+
 async function validateCard(
   front: string,
   back: string,
@@ -428,7 +511,7 @@ async function validateCard(
   const cardJson = JSON.stringify({ front, back, extra });
   const validationText = `${VALIDATION_PROMPT}\n${cardJson}\n"""`;
   const raw = await geminiRequest("gemini-3-flash-preview", validationText);
-  const result = JSON.parse(raw);
+  const result = parseModelJson(raw, "card validation", ValidationResultSchema);
   console.error("Card validation result:", result);
 
   if (result.result === true) {
@@ -438,7 +521,7 @@ async function validateCard(
   // Auto-fix with Gemini 3.1 Pro
   const fixPrompt = `${AUTOFIX_PROMPT}${result.details}\n\nOriginal flashcard:\n${cardJson}`;
   const fixRaw = await geminiRequest("gemini-3.1-pro-preview", fixPrompt);
-  const fixed = JSON.parse(fixRaw);
+  const fixed = parseModelJson(fixRaw, "card auto-fix", FixedCardSchema);
   console.error("Card auto-fixed:", fixed);
   return { front: fixed.front, back: fixed.back, extra: fixed.extra ?? extra, details: result.details };
 }
@@ -477,7 +560,7 @@ Input strings:
 ${JSON.stringify(placeholders.map((p) => p.value))}`;
 
   const raw = await geminiRequest("gemini-3.1-pro-preview", prompt);
-  const reformulated: string[] = JSON.parse(raw);
+  const reformulated = parseModelJson(raw, "placeholder reformulation", ReformulatedPlaceholdersSchema);
   console.error("Reformulated placeholders:", reformulated);
 
   const newHeaders = [...headers];
@@ -1106,7 +1189,7 @@ async function main() {
           },
         });
 
-        let responseText = `Successfully created new basic card" (noteId: ${noteId})`;
+        let responseText = `Successfully created new basic card (noteId: ${noteId})`;
         if (wasFixed) {
           responseText += `\n\nNote: Card was auto-corrected: ${validated.details}\nFront: ${validated.front}\nBack: ${validated.back}\nExtra: ${validated.extra}`;
         }
@@ -1178,7 +1261,7 @@ async function main() {
             content: [
               {
                 type: "text" as const,
-                text: `Abbreviation rejected: the definition (Back) reuses word(s) from the expansion (Front): ${hints.join(", ")}. These give away the answer — rewrite the definition without them.`,
+                text: `Abbreviation rejected: the 'description' field reuses word(s) from the 'boldedExpandedAbbreviation' field: ${hints.join(", ")}. These give away the answer — rewrite 'description' without them. The 'extra' field does not have the same restriction.`,
               },
             ],
             isError: true,
@@ -1866,7 +1949,9 @@ async function main() {
 }
 
 // Run the server
-main().catch((error) => {
-  console.error("Fatal error in main():", error);
-  process.exit(1);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error("Fatal error in main():", error);
+    process.exit(1);
+  });
+}
