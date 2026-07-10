@@ -681,10 +681,16 @@ function trimPunctuation(token: string): string {
   return token.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
 }
 
-// Words from the expansion (Front) that also appear, whole-word, in the definition (Back).
-export function findAbbreviationHints(front: string, back: string): string[] {
+function containsWholeTerm(text: string, term: string): boolean {
+  const escapedTerm = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escapedTerm}(?![\\p{L}\\p{N}])`, "iu").test(text);
+}
+
+// The abbreviation and words from the expansion (Front) that also appear in the definition (Back).
+export function findAbbreviationHints(abbreviation: string, front: string, back: string): string[] {
+  const plainBack = stripHtml(back);
   const backWords = new Set(
-    stripHtml(back)
+    plainBack
       .split(/\s+/)
       .map((t) => trimPunctuation(t).toLowerCase())
       .filter(Boolean),
@@ -692,6 +698,14 @@ export function findAbbreviationHints(front: string, back: string): string[] {
 
   const hints: string[] = [];
   const seen = new Set<string>();
+
+  const plainAbbreviation = stripHtml(abbreviation).trim();
+  const normalizedAbbreviation = plainAbbreviation.toLowerCase();
+  if (plainAbbreviation && containsWholeTerm(plainBack, plainAbbreviation)) {
+    seen.add(normalizedAbbreviation);
+    hints.push(plainAbbreviation);
+  }
+
   for (const rawToken of stripHtml(front).split(/\s+/)) {
     const trimmed = trimPunctuation(rawToken);
     const word = trimmed.toLowerCase();
@@ -806,7 +820,7 @@ async function main() {
               description: {
                 type: "string",
                 description:
-                  "Definition / what the abbreviation means, e.g. 'diet that has been shown to decrease blood pressure'",
+                  "Definition / what the abbreviation means. Must not contain the abbreviation itself or reuse content words from the expanded abbreviation, e.g. 'diet that has been shown to decrease blood pressure'",
               },
               context: {
                 type: "string",
@@ -1255,13 +1269,13 @@ async function main() {
           extra = "",
         } = CreateAbbreviationDefinitionCardArgumentsSchema.parse(args);
 
-        const hints = findAbbreviationHints(boldedExpandedAbbreviation, description);
+        const hints = findAbbreviationHints(abbreviation, boldedExpandedAbbreviation, description);
         if (hints.length > 0) {
           return {
             content: [
               {
                 type: "text" as const,
-                text: `Abbreviation rejected: the 'description' field reuses word(s) from the 'boldedExpandedAbbreviation' field: ${hints.join(", ")}. These give away the answer — rewrite 'description' without them. The 'extra' field does not have the same restriction.`,
+                text: `Abbreviation rejected: the 'description' field contains the abbreviation or reuses word(s) from the 'boldedExpandedAbbreviation' field: ${hints.join(", ")}. These give away the answer — rewrite 'description' without them. The 'extra' field does not have the same restriction.`,
               },
             ],
             isError: true,

@@ -37,45 +37,67 @@ describe("stripHtml", () => {
 });
 
 describe("findAbbreviationHints", () => {
+  const ABBREVIATION = "DASH";
   const FRONT = "<b>D</b>ietary <b>A</b>pproaches to <b>S</b>top <b>H</b>ypertension";
 
   it("returns [] when the definition shares no content words", () => {
-    expect(findAbbreviationHints(FRONT, "An eating plan that lowers blood pressure.")).toEqual([]);
+    expect(findAbbreviationHints(ABBREVIATION, FRONT, "An eating plan that lowers blood pressure.")).toEqual([]);
   });
 
   it("flags a shared content word, case-insensitively", () => {
-    expect(findAbbreviationHints(FRONT, "A regimen to reduce hypertension.")).toEqual(["Hypertension"]);
+    expect(findAbbreviationHints(ABBREVIATION, FRONT, "A regimen to reduce hypertension.")).toEqual(["Hypertension"]);
   });
 
   it("matches regardless of which side is upper/lower case", () => {
-    expect(findAbbreviationHints("Dietary plan", "a DIETARY thing")).toEqual(["Dietary"]);
+    expect(findAbbreviationHints(ABBREVIATION, "Dietary plan", "a DIETARY thing")).toEqual(["Dietary"]);
   });
 
   it("ignores stop words even when shared", () => {
     // "to" is in both Front and Back but must not be flagged.
-    expect(findAbbreviationHints(FRONT, "How to lower blood pressure.")).toEqual([]);
+    expect(findAbbreviationHints(ABBREVIATION, FRONT, "How to lower blood pressure.")).toEqual([]);
   });
 
   it("ignores words of two characters or fewer", () => {
     // "Of" (2 chars) appears in both but is too short to flag.
-    expect(findAbbreviationHints("Of Mice", "a story of farms")).toEqual([]);
+    expect(findAbbreviationHints(ABBREVIATION, "Of Mice", "a story of farms")).toEqual([]);
   });
 
   it("matches whole words only, not substrings", () => {
     // Front "Stop" must not match Back "stopped"/"nonstop".
-    expect(findAbbreviationHints("Stop sign", "the bus stopped at a nonstop route")).toEqual([]);
+    expect(findAbbreviationHints(ABBREVIATION, "Stop sign", "the bus stopped at a nonstop route")).toEqual([]);
   });
 
   it("strips HTML in the Back field before matching", () => {
-    expect(findAbbreviationHints("Approaches taken", "various <b>approaches</b> exist")).toEqual(["Approaches"]);
+    expect(findAbbreviationHints(ABBREVIATION, "Approaches taken", "various <b>approaches</b> exist")).toEqual([
+      "Approaches",
+    ]);
   });
 
   it("matches across trailing punctuation in the Back field", () => {
-    expect(findAbbreviationHints(FRONT, "It treats hypertension.")).toEqual(["Hypertension"]);
+    expect(findAbbreviationHints(ABBREVIATION, FRONT, "It treats hypertension.")).toEqual(["Hypertension"]);
   });
 
   it("returns multiple hits, deduped, preserving original Front casing", () => {
     const back = "a Dietary approach that targets hypertension and more hypertension";
-    expect(findAbbreviationHints(FRONT, back)).toEqual(["Dietary", "Hypertension"]);
+    expect(findAbbreviationHints(ABBREVIATION, FRONT, back)).toEqual(["Dietary", "Hypertension"]);
+  });
+
+  it("flags the abbreviation itself, including abbreviations of two characters or fewer", () => {
+    expect(findAbbreviationHints("AI", "Artificial Intelligence", "AI model behavior")).toEqual(["AI"]);
+  });
+
+  it("flags the abbreviation case-insensitively and next to punctuation", () => {
+    expect(findAbbreviationHints(ABBREVIATION, FRONT, "A dash-based eating plan.")).toEqual(["DASH"]);
+  });
+
+  it("does not match the abbreviation inside another word", () => {
+    expect(findAbbreviationHints(ABBREVIATION, FRONT, "A dashboard for meal planning.")).toEqual([]);
+  });
+
+  it("returns the abbreviation and reused expansion words without duplicates", () => {
+    expect(findAbbreviationHints(ABBREVIATION, FRONT, "The DASH regimen treats hypertension.")).toEqual([
+      "DASH",
+      "Hypertension",
+    ]);
   });
 });
