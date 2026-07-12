@@ -300,10 +300,10 @@ async function ankiRequest<T>(action: string, params: Record<string, any> = {}, 
                 return;
               }
 
-              // Some actions like updateNoteFields return null on success
+              // Some actions return null on success.
               if (parsedData.result === null || parsedData.result === undefined) {
                 // For actions that are expected to return null/undefined, return an empty success response
-                if (action === "updateNoteFields") {
+                if (action === "updateNoteFields" || action === "sync") {
                   resolve({} as T);
                   return;
                 }
