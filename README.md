@@ -72,6 +72,10 @@ To modify or extend the server:
 2. Rebuild with `npm run build`
 3. Debug with `npx @modelcontextprotocol/inspector node build/index.js`
 
+Run the full test suite with `npm test`. Tests include a deterministic search integration test using Anki's official
+headless backend and a temporary collection. This requires [uv](https://docs.astral.sh/uv/); the first run downloads
+the pinned Anki test dependency, and later runs use the local cache.
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

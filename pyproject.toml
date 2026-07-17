@@ -1,0 +1,8 @@
+[project]
+name = "clanki-test-support"
+version = "0.0.0"
+requires-python = ">=3.13,<3.14"
+dependencies = ["anki==26.5"]
+
+[tool.uv]
+package = false

@@ -8,6 +8,9 @@ Always run `npm run check && npm run build && npm test` after completing edits t
 ## Project structure
 - `src/index.ts` — Main MCP server. Contains all tool definitions, handlers, validation logic, and Gemini API integration.
 - `src/search-validation.test.ts` — Tests for search query validation and preparation (vitest).
+- `src/anki-search-integration.test.ts` — Runs generated search queries against a temporary collection using Anki's
+  official headless backend.
+- `tests/anki_search_fixture.py` — Builds the disposable Anki collection used by the integration test.
 - `biome.json` — Biome formatter/linter config (2-space indent, double quotes, 120 char line width).
 - `.gemini-api-key` — Gemini API key file (gitignored). Read at startup by the server.
 
@@ -31,4 +34,4 @@ AnkiConnect application-level errors (e.g., "duplicate") are not retried and are
 A single resource `anki://basic-card-creation-guidelines` serves the card creation rules. The rules are also embedded directly in the `create-basic-card` tool description for visibility.
 
 ## Testing
-Tests use vitest. Run with `npm test`. Test file covers `validateSearchQuery` and `prepareSearchQuery` with 29 test cases.
+Tests use vitest. Run with `npm test`; this also runs the Anki-backed search integration test through `uv`.

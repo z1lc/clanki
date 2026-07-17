@@ -18,6 +18,15 @@ const _ANKI_CONNECT_URL = "http://localhost:8765";
 const SEARCH_PAGE_SIZE = 100;
 const DEFAULT_DECK = "z::1 \u221E (manual catch-all)::0 interview prep::0 mcp";
 const MCP_TAG = "mcp_generated";
+const ALLOWED_ZDONE_BASIC_ID_MARKERS = ["SOFTWARE_A_VS_B", "HISTORICAL_EVENT_DESCRIPTION_TO_NAME"] as const;
+const HIDDEN_ZDONE_BASIC_SEARCH_FIELDS = new Set([
+  "zdone Unified ID",
+  "Is Multi Answer?",
+  "Front Image",
+  "Back Image",
+  "Source",
+  "Debug",
+]);
 const SYNC_DEBOUNCE_MS = 5 * 60 * 1000; // auto-sync 5 min after the last collection change
 // Mutating actions that (re)arm the sync timer; excludes "sync" itself to avoid a loop.
 const SYNC_TRIGGER_ACTIONS = new Set(["addNote", "updateNoteFields"]);
@@ -630,6 +639,42 @@ export function prepareSearchQuery(query: string): string {
     }
   }
   return tokens.join(" ");
+}
+
+function escapeAnkiSearchText(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\*/g, "\\*").replace(/_/g, "\\_");
+}
+
+export function buildSearchQuery(preparedQuery: string): string {
+  const allowedZdoneBasicIds = ALLOWED_ZDONE_BASIC_ID_MARKERS.map(
+    (marker) => `"zdone Unified ID:*${escapeAnkiSearchText(marker)}*"`,
+  ).join(" OR ");
+  const noteScope = `(-note:Basic OR (note:Basic (${allowedZdoneBasicIds})))`;
+  return `deck:z -is:suspended -is:new ${noteScope} (${preparedQuery})`;
+}
+
+export function isAllowedZdoneBasicNote(note: any): boolean {
+  if (note.modelName !== "Basic") return false;
+
+  const idValue = note.fields?.["zdone Unified ID"]?.value;
+  if (typeof idValue !== "string") return false;
+
+  const normalizedId = idValue.toUpperCase();
+  return ALLOWED_ZDONE_BASIC_ID_MARKERS.some((marker) => normalizedId.includes(marker));
+}
+
+export function formatSearchNote(note: any): string {
+  const hideZdoneFields = isAllowedZdoneBasicNote(note);
+  const lines: string[] = [`Note ID: ${note.noteId}`];
+  for (const [fieldName, field] of Object.entries(note.fields)) {
+    if (hideZdoneFields && HIDDEN_ZDONE_BASIC_SEARCH_FIELDS.has(fieldName)) continue;
+
+    const val = (field as any).value;
+    if (val) {
+      lines.push(`${fieldName}: ${val}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 const ABBREVIATION_STOP_WORDS = new Set([
@@ -1647,7 +1692,7 @@ async function main() {
         validateSearchQuery(query);
         const preparedQuery = prepareSearchQuery(query);
 
-        const fullQuery = `deck:z -is:suspended -is:new -note:Basic (${preparedQuery})`;
+        const fullQuery = buildSearchQuery(preparedQuery);
         const noteIds = (await ankiRequest<number[]>("findNotes", { query: fullQuery })).sort((a, b) => b - a);
 
         if (noteIds.length === 0) {
@@ -1675,14 +1720,7 @@ async function main() {
             for (const tag of note.tags) {
               if (tag !== "leech") allTags.add(tag);
             }
-            const lines: string[] = [`Note ID: ${note.noteId}`];
-            for (const [fieldName, field] of Object.entries(note.fields)) {
-              const val = (field as any).value;
-              if (val) {
-                lines.push(`${fieldName}: ${val}`);
-              }
-            }
-            return lines.join("\n");
+            return formatSearchNote(note);
           })
           .join("\n---\n");
 

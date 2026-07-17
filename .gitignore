@@ -2,6 +2,7 @@ docs/
 repomix-output.txt
 build/
 node_modules/
+.venv/
 .gemini-api-key
 .anki-connect-api-key
 .idea/
