@@ -763,7 +763,23 @@ export function findAbbreviationHints(abbreviation: string, front: string, back:
   return hints;
 }
 
-async function main() {
+export type AnkiRequestFunction = <T>(action: string, params?: Record<string, any>) => Promise<T>;
+
+export interface McpServerDependencies {
+  ankiRequest?: AnkiRequestFunction;
+  validateCard?: typeof validateCard;
+  reformulatePlaceholders?: typeof reformulatePlaceholders;
+  showAttributePicker?: typeof showAttributePicker;
+  updatePickerData?: typeof updatePickerData;
+}
+
+export function createMcpServer(dependencies: McpServerDependencies = {}): Server {
+  const requestAnki = dependencies.ankiRequest ?? ankiRequest;
+  const validateBasicCard = dependencies.validateCard ?? validateCard;
+  const reformulateTablePlaceholders = dependencies.reformulatePlaceholders ?? reformulatePlaceholders;
+  const pickTableAttributes = dependencies.showAttributePicker ?? showAttributePicker;
+  const publishPickerData = dependencies.updatePickerData ?? updatePickerData;
+
   // Create server instance
   const server = new Server(
     {
@@ -1228,7 +1244,7 @@ async function main() {
       if (name === "create-basic-card") {
         const { front, back, context = "", extra = "", source = "" } = CreateCardArgumentsSchema.parse(args);
 
-        const validated = await validateCard(front, back, extra);
+        const validated = await validateBasicCard(front, back, extra);
         const wasFixed = validated.front !== front || validated.back !== back || validated.extra !== extra;
 
         const fields: Record<string, string> = {
@@ -1239,7 +1255,7 @@ async function main() {
         if (validated.extra) fields["Extra \u2795"] = validated.extra;
         if (source) fields["Source \uD83C\uDFAF"] = source;
 
-        const noteId = await ankiRequest<number>("addNote", {
+        const noteId = await requestAnki<number>("addNote", {
           note: {
             deckName: DEFAULT_DECK,
             modelName: "1 Basic",
@@ -1266,7 +1282,7 @@ async function main() {
       if (name === "update-basic-card") {
         const { noteId, front, back, context, extra, source } = UpdateCardArgumentsSchema.parse(args);
 
-        const noteInfo = await ankiRequest<any[]>("notesInfo", {
+        const noteInfo = await requestAnki<any[]>("notesInfo", {
           notes: [noteId],
         });
 
@@ -1287,7 +1303,7 @@ async function main() {
         if (source !== undefined) fields["Source \uD83C\uDFAF"] = source;
 
         if (Object.keys(fields).length > 0) {
-          await ankiRequest("updateNoteFields", {
+          await requestAnki("updateNoteFields", {
             note: {
               id: noteId,
               fields,
@@ -1336,7 +1352,7 @@ async function main() {
         if (context) fields["Context 💡"] = context;
         if (extra) fields["Extra ➕"] = extra;
 
-        const noteId = await ankiRequest<number>("addNote", {
+        const noteId = await requestAnki<number>("addNote", {
           note: {
             deckName: DEFAULT_DECK,
             modelName: "1 Basic",
@@ -1370,7 +1386,7 @@ async function main() {
         if (context) fields["Context \uD83D\uDCA1"] = context;
         if (source) fields["Source \uD83C\uDFAF"] = source;
 
-        const noteId = await ankiRequest<number>("addNote", {
+        const noteId = await requestAnki<number>("addNote", {
           note: {
             deckName: DEFAULT_DECK,
             modelName: "2 Cloze",
@@ -1393,7 +1409,7 @@ async function main() {
         const { noteId, text, backExtra, context, source } = UpdateClozeCardArgumentsSchema.parse(args);
 
         // Get the current note info to verify it's a cloze note
-        const noteInfo = await ankiRequest<any[]>("notesInfo", {
+        const noteInfo = await requestAnki<any[]>("notesInfo", {
           notes: [noteId],
         });
 
@@ -1423,7 +1439,7 @@ async function main() {
         if (source !== undefined) fields["Source \uD83C\uDFAF"] = source;
 
         if (Object.keys(fields).length > 0) {
-          await ankiRequest("updateNoteFields", {
+          await requestAnki("updateNoteFields", {
             note: {
               id: noteId,
               fields,
@@ -1475,7 +1491,7 @@ async function main() {
         if (context) fields["Context \uD83D\uDCA1"] = context;
         if (source) fields["Source \uD83C\uDFAF"] = source;
 
-        const noteId = await ankiRequest<number>("addNote", {
+        const noteId = await requestAnki<number>("addNote", {
           note: {
             deckName: DEFAULT_DECK,
             modelName: "7 Programming Language Function",
@@ -1513,7 +1529,7 @@ async function main() {
         } = UpdateProgrammingCardArgumentsSchema.parse(args);
 
         // Get the current note info to verify it's a programming card
-        const noteInfo = await ankiRequest<any[]>("notesInfo", {
+        const noteInfo = await requestAnki<any[]>("notesInfo", {
           notes: [noteId],
         });
 
@@ -1548,7 +1564,7 @@ async function main() {
         if (source !== undefined) fields["Source \uD83C\uDFAF"] = source;
 
         if (Object.keys(fields).length > 0) {
-          await ankiRequest("updateNoteFields", {
+          await requestAnki("updateNoteFields", {
             note: {
               id: noteId,
               fields,
@@ -1599,7 +1615,7 @@ async function main() {
         if (context) fields["Context \uD83D\uDCA1"] = context;
         if (source) fields["Source \uD83C\uDFAF"] = source;
 
-        const noteId = await ankiRequest<number>("addNote", {
+        const noteId = await requestAnki<number>("addNote", {
           note: {
             deckName: DEFAULT_DECK,
             modelName: "8 Interview Question",
@@ -1636,7 +1652,7 @@ async function main() {
           source,
         } = UpdateInterviewCardArgumentsSchema.parse(args);
 
-        const noteInfo = await ankiRequest<any[]>("notesInfo", {
+        const noteInfo = await requestAnki<any[]>("notesInfo", {
           notes: [noteId],
         });
 
@@ -1668,7 +1684,7 @@ async function main() {
         if (source !== undefined) fields["Source \uD83C\uDFAF"] = source;
 
         if (Object.keys(fields).length > 0) {
-          await ankiRequest("updateNoteFields", {
+          await requestAnki("updateNoteFields", {
             note: {
               id: noteId,
               fields,
@@ -1693,7 +1709,7 @@ async function main() {
         const preparedQuery = prepareSearchQuery(query);
 
         const fullQuery = buildSearchQuery(preparedQuery);
-        const noteIds = (await ankiRequest<number[]>("findNotes", { query: fullQuery })).sort((a, b) => b - a);
+        const noteIds = (await requestAnki<number[]>("findNotes", { query: fullQuery })).sort((a, b) => b - a);
 
         if (noteIds.length === 0) {
           return {
@@ -1708,7 +1724,7 @@ async function main() {
         let allNotes: any[] = [];
         for (let i = 0; i < pageNoteIds.length; i += chunkSize) {
           const chunk = pageNoteIds.slice(i, i + chunkSize);
-          const chunkNotes = await ankiRequest<any[]>("notesInfo", {
+          const chunkNotes = await requestAnki<any[]>("notesInfo", {
             notes: chunk,
           });
           allNotes = allNotes.concat(chunkNotes);
@@ -1803,7 +1819,7 @@ async function main() {
 
         if (attributeLabels.length > 0) {
           // Open picker immediately with original headers, reformulate in parallel
-          const pickerPromise = showAttributePicker({
+          const pickerPromise = pickTableAttributes({
             headers,
             rows,
             attributeLabels,
@@ -1811,7 +1827,7 @@ async function main() {
             isOrientationA,
           });
 
-          const reformulated = await reformulatePlaceholders(headers, rows);
+          const reformulated = await reformulateTablePlaceholders(headers, rows);
           headers = reformulated.headers;
           rows = reformulated.rows;
           if (isOrientationA) {
@@ -1821,7 +1837,7 @@ async function main() {
               .map((r, i) => ({ label: r[0].value, index: i }))
               .filter((r) => r.label.includes("__"));
           }
-          updatePickerData({ headers, rows, attributeLabels, itemLabels, isOrientationA });
+          publishPickerData({ headers, rows, attributeLabels, itemLabels, isOrientationA });
 
           const pickerResult = await pickerPromise;
           selectedAttributes = pickerResult.selectedAttributes;
@@ -1829,7 +1845,7 @@ async function main() {
           clozeItemHints = pickerResult.clozeItemHints;
         } else {
           // No attributes to pick — still reformulate for card creation
-          const reformulated = await reformulatePlaceholders(headers, rows);
+          const reformulated = await reformulateTablePlaceholders(headers, rows);
           headers = reformulated.headers;
           rows = reformulated.rows;
         }
@@ -1893,7 +1909,7 @@ async function main() {
         const html = generateClozeTable(headers, rows, clozeCells, clozeHeaders, itemHint, itemClozeCells);
 
         // Look up the deck containing "ClozeTableManager" via AnkiConnect
-        const allDecks = await ankiRequest<string[]>("deckNames");
+        const allDecks = await requestAnki<string[]>("deckNames");
         const clozeTableDeck = allDecks.find((d) => d.includes("ClozeTableManager"));
         if (!clozeTableDeck) {
           return {
@@ -1913,7 +1929,7 @@ async function main() {
         if (context) fields["Context 💡"] = context;
         if (source) fields["Source 🏴"] = source;
 
-        const noteId = await ankiRequest<number>("addNote", {
+        const noteId = await requestAnki<number>("addNote", {
           note: {
             deckName: clozeTableDeck,
             modelName: "2 Cloze",
@@ -1990,6 +2006,12 @@ async function main() {
     }
     throw new Error(`Invalid resource URI: ${uri}`);
   });
+
+  return server;
+}
+
+async function main() {
+  const server = createMcpServer();
 
   // Start the attribute picker HTTP server (runs persistently for instant browser opens)
   await startPickerServer();

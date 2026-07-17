@@ -10,7 +10,11 @@ Always run `npm run check && npm run build && npm test` after completing edits t
 - `src/search-validation.test.ts` — Tests for search query validation and preparation (vitest).
 - `src/anki-search-integration.test.ts` — Runs generated search queries against a temporary collection using Anki's
   official headless backend.
+- `src/tools-e2e.test.ts` — Exercises the public MCP tools over an in-memory MCP transport against a disposable Anki
+  collection. Gemini validation and the cloze-table picker are deterministic test doubles.
 - `tests/anki_search_fixture.py` — Builds the disposable Anki collection used by the integration test.
+- `tests/anki_backend_bridge.py` — Implements the AnkiConnect actions needed by the public-tool end-to-end tests using
+  Anki's official headless backend.
 - `biome.json` — Biome formatter/linter config (2-space indent, double quotes, 120 char line width).
 - `.gemini-api-key` — Gemini API key file (gitignored). Read at startup by the server.
 
@@ -34,4 +38,5 @@ AnkiConnect application-level errors (e.g., "duplicate") are not retried and are
 A single resource `anki://basic-card-creation-guidelines` serves the card creation rules. The rules are also embedded directly in the `create-basic-card` tool description for visibility.
 
 ## Testing
-Tests use vitest. Run with `npm test`; this also runs the Anki-backed search integration test through `uv`.
+Tests use vitest. Run with `npm test`; this also runs the Anki-backed search and public-tool end-to-end tests through
+`uv`. The tool tests use temporary note types, decks, and collection data rather than the user's Anki profile.

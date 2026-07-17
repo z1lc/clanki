@@ -72,9 +72,11 @@ To modify or extend the server:
 2. Rebuild with `npm run build`
 3. Debug with `npx @modelcontextprotocol/inspector node build/index.js`
 
-Run the full test suite with `npm test`. Tests include a deterministic search integration test using Anki's official
-headless backend and a temporary collection. This requires [uv](https://docs.astral.sh/uv/); the first run downloads
-the pinned Anki test dependency, and later runs use the local cache.
+Run the full test suite with `npm test`. Tests include deterministic search and public MCP tool end-to-end coverage
+using Anki's official headless backend and temporary collections. The tool suite runs requests through an MCP client
+and verifies persisted notes for basic, abbreviation, programming, interview, and cloze-table operations; Gemini and
+the interactive cloze picker use deterministic test doubles. This requires [uv](https://docs.astral.sh/uv/); the first
+run downloads the pinned Anki test dependency, and later runs use the local cache.
 
 ## License
 
