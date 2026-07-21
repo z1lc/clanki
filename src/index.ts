@@ -44,6 +44,7 @@ const CreateCardArgumentsSchema = z.object({
   context: z.string().optional(),
   extra: z.string().optional(),
   source: z.string().optional(),
+  imageReference: z.string().optional(),
 });
 
 const CreateClozeCardArgumentsSchema = z.object({
@@ -763,6 +764,27 @@ export function findAbbreviationHints(abbreviation: string, front: string, back:
   return hints;
 }
 
+// The trailing U+FE0F variation selector is invisible in an editor, so the field name is escaped here to keep it
+// byte-identical to the one Anki reports — a mismatch fails the note write with "field was not found".
+const EXTRA_IMAGE_FIELD = "Extra Image \uD83D\uDDBC\uFE0F";
+const IMAGE_REFERENCE_MARKER = "INSERT_IMAGE_HERE";
+const LEADING_IMAGE_MARKER = new RegExp(`^${IMAGE_REFERENCE_MARKER}[\\s:;,.-]*`, "i");
+
+const IMAGE_REFERENCE_GUIDANCE =
+  "Optional. Only for an image that already exists in this conversation — one you generated, or a figure or screenshot the user shared. Never reference an image that does not exist. Write a short pointer so the user can find it and paste it in, e.g. 'the p99 latency vs. shard count chart above'. Plain text, not HTML.";
+
+const IMAGE_REFERENCE_HTML_ERROR = `'imageReference' must be a plain-text pointer to an image already in the conversation, not HTML. The user pastes the real image in themselves.`;
+
+export function containsImageTag(value: string): boolean {
+  return /<img\b/i.test(value);
+}
+
+// Placeholder text standing in for an image the user still has to paste; the marker makes pending cards findable.
+export function formatImageReference(description: string): string {
+  const pointer = description.trim().replace(LEADING_IMAGE_MARKER, "").trim();
+  return pointer ? `${IMAGE_REFERENCE_MARKER} ${pointer}` : "";
+}
+
 export type AnkiRequestFunction = <T>(action: string, params?: Record<string, any>) => Promise<T>;
 
 export interface McpServerDependencies {
@@ -823,6 +845,10 @@ export function createMcpServer(dependencies: McpServerDependencies = {}): Serve
               source: {
                 type: "string",
                 description: "Source reference for the card content",
+              },
+              imageReference: {
+                type: "string",
+                description: IMAGE_REFERENCE_GUIDANCE,
               },
             },
             required: ["front", "back"],
@@ -1242,10 +1268,25 @@ export function createMcpServer(dependencies: McpServerDependencies = {}): Serve
 
     try {
       if (name === "create-basic-card") {
-        const { front, back, context = "", extra = "", source = "" } = CreateCardArgumentsSchema.parse(args);
+        const {
+          front,
+          back,
+          context = "",
+          extra = "",
+          source = "",
+          imageReference = "",
+        } = CreateCardArgumentsSchema.parse(args);
+
+        if (containsImageTag(imageReference)) {
+          return {
+            content: [{ type: "text" as const, text: IMAGE_REFERENCE_HTML_ERROR }],
+            isError: true,
+          };
+        }
 
         const validated = await validateBasicCard(front, back, extra);
         const wasFixed = validated.front !== front || validated.back !== back || validated.extra !== extra;
+        const imagePlaceholder = formatImageReference(imageReference);
 
         const fields: Record<string, string> = {
           Front: validated.front,
@@ -1254,6 +1295,7 @@ export function createMcpServer(dependencies: McpServerDependencies = {}): Serve
         if (context) fields["Context \uD83D\uDCA1"] = context;
         if (validated.extra) fields["Extra \u2795"] = validated.extra;
         if (source) fields["Source \uD83C\uDFAF"] = source;
+        if (imagePlaceholder) fields[EXTRA_IMAGE_FIELD] = imagePlaceholder;
 
         const noteId = await requestAnki<number>("addNote", {
           note: {
@@ -1267,6 +1309,9 @@ export function createMcpServer(dependencies: McpServerDependencies = {}): Serve
         let responseText = `Successfully created new basic card (noteId: ${noteId})`;
         if (wasFixed) {
           responseText += `\n\nNote: Card was auto-corrected: ${validated.details}\nFront: ${validated.front}\nBack: ${validated.back}\nExtra: ${validated.extra}`;
+        }
+        if (imagePlaceholder) {
+          responseText += `\n\nImage placeholder written to "${EXTRA_IMAGE_FIELD}": ${imagePlaceholder}`;
         }
 
         return {

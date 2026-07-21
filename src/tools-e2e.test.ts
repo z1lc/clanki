@@ -12,6 +12,7 @@ import { type AnkiRequestFunction, createMcpServer } from "./index.js";
 const DEFAULT_DECK = "z::1 ∞ (manual catch-all)::0 interview prep::0 mcp";
 const CLOZE_TABLE_DECK = "z::ClozeTableManager Fixtures";
 const MCP_TAG = "mcp_generated";
+const EXTRA_IMAGE_FIELD = "Extra Image \uD83D\uDDBC\uFE0F";
 
 interface NoteInfo {
   noteId: number;
@@ -194,6 +195,36 @@ describe("public MCP tools with the Anki backend", () => {
     expect(rejected.isError).toBe(true);
     expect(resultText(rejected)).toContain("was not created by the MCP tool");
     expect((await getNote(untaggedNoteId)).fields.Back.value).toBe("Card");
+  });
+
+  it("stores an image reference placeholder and rejects HTML in place of a pointer", async () => {
+    const created = await client.callTool({
+      name: "create-basic-card",
+      arguments: {
+        front: "Which shard count minimized p99 latency in the benchmark?",
+        back: "Eight shards",
+        imageReference: "the p99 latency vs. shard count chart above  ",
+      },
+    });
+    expect(created.isError).not.toBe(true);
+    expect(resultText(created)).toContain("Image placeholder written");
+    expect((await getNote(noteIdFrom(created))).fields[EXTRA_IMAGE_FIELD].value).toBe(
+      "INSERT_IMAGE_HERE the p99 latency vs. shard count chart above",
+    );
+
+    const html = await client.callTool({
+      name: "create-basic-card",
+      arguments: { front: "Which valve did the figure label?", back: "Mitral", imageReference: '<img src="x.png">' },
+    });
+    expect(html.isError).toBe(true);
+    expect(resultText(html)).toContain("plain-text pointer");
+
+    // update-basic-card does not expose imageReference; a pasted image is only ever edited in Anki.
+    const untouched = await client.callTool({
+      name: "create-basic-card",
+      arguments: { front: "Which layer caches reads?", back: "The buffer pool" },
+    });
+    expect((await getNote(noteIdFrom(untouched))).fields[EXTRA_IMAGE_FIELD].value).toBe("");
   });
 
   it("creates a valid abbreviation card and rejects answer-leaking descriptions", async () => {

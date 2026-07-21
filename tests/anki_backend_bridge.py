@@ -18,6 +18,7 @@ NOTETYPES = {
         "Source 🎯",
         "🔹Abbrev Short 🆎",
         "🔹Add Reverse 🔀",
+        "Extra Image \U0001F5BC\uFE0F",
     ],
     "2 Cloze": ["⭐Text", "Extra Text", "Context 💡", "Source 🏴", "Source 🎯"],
     "7 Programming Language Function": [
